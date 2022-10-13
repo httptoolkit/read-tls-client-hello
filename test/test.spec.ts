@@ -4,7 +4,7 @@ import * as https from 'https';
 import { makeDestroyable, DestroyableServer } from 'destroyable-server';
 
 import { expect } from 'chai';
-import { getDeferred } from './test-util';
+import { getDeferred, streamToBuffer } from './test-util';
 
 import {
     getTlsFingerprintData,
@@ -87,6 +87,43 @@ describe("Read-TLS-Fingerprint", () => {
             '398430069e0a8ecfbc8db0778d658d77', // Node 12 - 16
             '0cce74b0d9b7f8528fb2181588d23793' // Node 17+
         ]);
+    });
+
+    it("calculates the same fingerprint as ja3.zone", async () => {
+        server = makeDestroyable(new net.Server());
+
+        server.listen();
+        await new Promise((resolve) => server.on('listening', resolve));
+
+        let incomingSocketPromise = getDeferred<net.Socket>();
+        server.on('connection', (socket) => incomingSocketPromise.resolve(socket));
+
+        const port = (server.address() as net.AddressInfo).port;
+        https.request({
+            host: 'localhost',
+            port
+        }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
+
+        const incomingSocket = await incomingSocketPromise;
+        const ourFingerprint = await getTlsFingerprintAsJa3(incomingSocket);
+
+        const remoteFingerprint = await new Promise((resolve, reject) => {
+            const response = https.get('https://check.ja3.zone/');
+            response.on('response', async (resp) => {
+                if (resp.statusCode !== 200) reject(new Error(`Unexpected ${resp.statusCode} from ja3.zon`));
+
+                try {
+                    const rawData = await streamToBuffer(resp);
+                    const data = JSON.parse(rawData.toString());
+                    resolve(data.hash);
+                } catch (e) {
+                    reject(e);
+                }
+            });
+            response.on('error', reject);
+        });
+
+        expect(ourFingerprint).to.equal(remoteFingerprint);
     });
 
 });

@@ -1,3 +1,5 @@
+import * as stream from 'stream';
+
 export type Deferred<T> = Promise<T> & {
     resolve(value: T): void,
     reject(e: Error): void
@@ -14,4 +16,14 @@ export function getDeferred<T>(): Deferred<T> {
     result.reject = rejectCallback!;
 
     return result;
+}
+
+export async function streamToBuffer(stream: stream.Readable): Promise<Buffer> {
+    const data: Buffer[] = [];
+    stream.on('data', (d) => data.push(d));
+
+    return new Promise((resolve, reject) => {
+        stream.on('end', () => resolve(Buffer.concat(data)));
+        stream.on('error', reject);
+    });
 }
