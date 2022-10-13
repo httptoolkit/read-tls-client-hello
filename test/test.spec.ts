@@ -1,11 +1,15 @@
 import * as net from 'net';
 import * as tls from 'tls';
+import * as https from 'https';
 import { makeDestroyable, DestroyableServer } from 'destroyable-server';
 
 import { expect } from 'chai';
 import { getDeferred } from './test-util';
 
-import { getTlsFingerprint } from '../src/index';
+import {
+    getTlsFingerprintData,
+    getTlsFingerprintAsJa3
+} from '../src/index';
 
 const nodeMajorVersion = parseInt(process.version.slice(1).split('.')[0], 10);
 
@@ -15,7 +19,7 @@ describe("Read-TLS-Fingerprint", () => {
 
     afterEach(() => server?.destroy());
 
-    it("can read Node's fingerprint", async () => {
+    it("can read Node's fingerprint data", async () => {
         server = makeDestroyable(new net.Server());
 
         server.listen();
@@ -31,7 +35,7 @@ describe("Read-TLS-Fingerprint", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const fingerprint = await getTlsFingerprint(incomingSocket);
+        const fingerprint = await getTlsFingerprintData(incomingSocket);
 
         const [
             tlsVersion,
@@ -60,4 +64,29 @@ describe("Read-TLS-Fingerprint", () => {
         ]);
         expect(curveFormats).to.deep.equal([0, 1, 2]);
     });
+
+    it("can read Node's JA3 fingerprint", async () => {
+        server = makeDestroyable(new net.Server());
+
+        server.listen();
+        await new Promise((resolve) => server.on('listening', resolve));
+
+        let incomingSocketPromise = getDeferred<net.Socket>();
+        server.on('connection', (socket) => incomingSocketPromise.resolve(socket));
+
+        const port = (server.address() as net.AddressInfo).port;
+        https.request({
+            host: 'localhost',
+            port
+        }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
+
+        const incomingSocket = await incomingSocketPromise;
+        const fingerprint = await getTlsFingerprintAsJa3(incomingSocket);
+
+        expect(fingerprint).to.be.oneOf([
+            '398430069e0a8ecfbc8db0778d658d77', // Node 12 - 16
+            '0cce74b0d9b7f8528fb2181588d23793' // Node 17+
+        ]);
+    });
+
 });
