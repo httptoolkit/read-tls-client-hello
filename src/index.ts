@@ -1,4 +1,5 @@
 import * as stream from 'stream';
+import * as crypto from 'crypto';
 
 const collectBytes = (stream: stream.Readable, byteLength: number) => {
     if (byteLength === 0) return Buffer.from([]);
@@ -42,7 +43,7 @@ const collectBytes = (stream: stream.Readable, byteLength: number) => {
 const getUint16BE = (buffer: Buffer, offset: number) =>
     (buffer[offset] << 8) + buffer[offset+1];
 
-export async function getTlsFingerprint(rawStream: stream.Readable) {
+export async function getTlsFingerprintData(rawStream: stream.Readable) {
     // Create a separate stream, which isn't flowing, so we can read byte-by-byte regardless of how else
     // the stream is being used.
     const inputStream = new stream.PassThrough();
@@ -125,4 +126,18 @@ export async function getTlsFingerprint(rawStream: stream.Readable) {
         groupsFingerprint,
         curveFormatsFingerprint
     ] as const;
+}
+
+export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
+    const fingerprintData = await getTlsFingerprintData(rawStream);
+
+    const fingerprintString = [
+        fingerprintData[0],
+        fingerprintData[1].join('-'),
+        fingerprintData[2].join('-'),
+        fingerprintData[3].join('-'),
+        fingerprintData[4].join('-')
+    ].join(',');
+
+    return crypto.createHash('md5').update(fingerprintString).digest('hex');
 }
