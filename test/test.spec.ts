@@ -248,4 +248,39 @@ describe("Read-TLS-Fingerprint", () => {
         ]);
     });
 
+    it("doesn't break non-TLS connections", async () => {
+        const httpServer = new http.Server();
+        server = makeDestroyable(new net.Server());
+
+        server.on('connection', async (socket: any) => {
+            socket.tlsFingerprint = await getTlsFingerprintAsJa3(socket)
+                .catch(e => ({ error: e }));
+            httpServer.emit('connection', socket);
+        });
+
+        httpServer.on('request', (request, response) => {
+            expect(request.method).to.equal('GET');
+            expect(request.url).to.equal('/test-request-path');
+
+            const fingerprint = (request.socket as any).tlsFingerprint;
+            expect(fingerprint.error.message).to.equal(
+                "Can't calculate TLS fingerprint - not a TLS stream"
+            );
+
+            response.writeHead(200).end();
+        });
+
+        server.listen();
+        await new Promise((resolve) => server.on('listening', resolve));
+
+        const port = (server.address() as net.AddressInfo).port;
+        const req = http.get({ host: 'localhost', port, path: '/test-request-path' });
+
+        const response = await new Promise<http.ServerResponse>((resolve) =>
+            req.on('response', resolve)
+        );
+
+        expect(response.statusCode).to.equal(200);
+    });
+
 });
