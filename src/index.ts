@@ -3,17 +3,21 @@ import * as crypto from 'crypto';
 import * as tls from 'tls';
 import * as net from 'net';
 
+type ErrorWithConsumedData = Error & {
+    consumedData: Buffer
+};
+
 const collectBytes = (stream: stream.Readable, byteLength: number) => {
     if (byteLength === 0) return Buffer.from([]);
 
     return new Promise<Buffer>(async (resolve, reject) => {
         const closeReject = () => reject(new Error('Stream closed before expected data could be read'));
 
+        const data: Buffer[] = [];
+
         try {
             stream.on('error', reject);
             stream.on('close', closeReject);
-
-            const data: Buffer[] = [];
             let dataLength = 0;
             let readNull = false;
             do {
@@ -34,6 +38,7 @@ const collectBytes = (stream: stream.Readable, byteLength: number) => {
 
             return resolve(Buffer.concat(data, byteLength));
         } catch (e) {
+            Object.assign(e as ErrorWithConsumedData, { consumedData: data });
             reject(e);
         } finally {
             stream.removeListener('error', reject);
@@ -57,33 +62,81 @@ export type TlsFingerprintData = [
     curveFormats: number[]
 ];
 
+/**
+ * Seperate error class. If you want to detect TLS parsing errors, but ignore TLS fingerprint
+ * issues from definitely-not-TLS traffic, you can ignore all instances of this error.
+ */
+export class NonTlsError extends Error {
+    constructor(message: string) {
+        super(message);
+
+        // Fix prototypes (required for custom error types):
+        const actualProto = new.target.prototype;
+        Object.setPrototypeOf(this, actualProto);
+    }
+}
+
+async function extractTlsHello(inputStream: stream.Readable): Promise<Buffer> {
+    const consumedData = [];
+    try {
+        consumedData.push(await collectBytes(inputStream, 1));
+        const [recordType] = consumedData[0];
+        if (recordType !== 0x16) throw new Error("Can't calculate TLS fingerprint - not a TLS stream");
+
+        consumedData.push(await collectBytes(inputStream, 2));
+        const recordLengthBytes = await collectBytes(inputStream, 2);
+        consumedData.push(recordLengthBytes);
+        const recordLength = recordLengthBytes.readUint16BE();
+
+        consumedData.push(await collectBytes(inputStream, recordLength));
+
+        // Put all the bytes back, so that this stream can still be used to create a real TLS session
+        return Buffer.concat(consumedData);
+    } catch (error: any) {
+        if (error.consumedData) {
+            // This happens if there's an error inside collectBytes with a partial read.
+            (error.consumedData as ErrorWithConsumedData).consumedData = Buffer.concat([
+                ...consumedData,
+                error.consumedData as Buffer
+            ])
+        } else {
+            Object.assign(error, { consumedData: Buffer.concat(consumedData) });
+        }
+
+        throw error;
+    }
+}
+
 export async function getTlsFingerprintData(inputStream: stream.Readable): Promise<TlsFingerprintData> {
     const wasFlowing = inputStream.readableFlowing;
     if (wasFlowing) inputStream.pause(); // Pause other readers, so we have time to precisely get the data we need.
 
-    const recordTypeBytes = await collectBytes(inputStream, 1);
-    const [recordType] = recordTypeBytes;
-    if (recordType !== 0x16) throw new Error("Can't calculate TLS fingerprint - not a TLS stream");
+    let clientHelloRecordData: Buffer;
+    try {
+        clientHelloRecordData = await extractTlsHello(inputStream);
+    } catch (error: any) {
+        if ('consumedData' in error) {
+            inputStream.unshift(error.consumedData as Buffer);
+        }
+        if (wasFlowing) inputStream.resume(); // If there were other readers, resume and let them continue
+        throw new NonTlsError(error.message);
+    }
 
-    const tlsRecordVersion = await collectBytes(inputStream, 2);
-    const recordLengthBytes = await collectBytes(inputStream, 2);
-    const recordLength = recordLengthBytes.readUint16BE();
+    // Put all the bytes back, so that this stream can still be used to create a real TLS session
+    inputStream.unshift(clientHelloRecordData);
+    if (wasFlowing) inputStream.resume(); // If there were other readers, resume and let them continue
 
     // Collect all the hello bytes, and then give us a stream of exactly only those bytes, so we can
     // still process them step by step in order:
-    const recordBytes = await collectBytes(inputStream, recordLength);
-    const helloDataStream = stream.Readable.from(recordBytes, { objectMode: false });
-
-    // Put all the bytes back, so that this stream can still be used to create a real TLS session
-    inputStream.unshift(Buffer.concat([recordTypeBytes, tlsRecordVersion, recordLengthBytes, recordBytes]));
-    if (wasFlowing) inputStream.resume(); // If there were other readers, resume and let them continue
+    const clientHello = clientHelloRecordData.slice(5); // Strip TLS record prefix
+    const helloDataStream = stream.Readable.from(clientHello, { objectMode: false });
 
     const [helloType] = (await collectBytes(helloDataStream, 1));
     if (helloType !== 0x1) throw new Error("Can't calculate TLS fingerprint - not a TLS client hello");
 
     const helloLength = (await collectBytes(helloDataStream, 3)).readIntBE(0, 3);
-    if (helloLength !== recordLength - 4) throw new Error(
-        `Unexpected client hello length: ${helloLength} (or ${recordLength})`
+    if (helloLength !== clientHello.byteLength - 4) throw new Error(
+        `Unexpected client hello length: ${helloLength} (of ${clientHello.byteLength})`
     );
 
     const clientTlsVersion = await collectBytes(helloDataStream, 2);
@@ -220,9 +273,11 @@ export function enableFingerprinting(tlsServer: tls.Server) {
                 ja3: calculateJa3FromFingerprintData(fingerprintData)
             };
         } catch (e) {
-            console.warn(`TLS fingerprint not available for TLS connection from ${
-                socket.remoteAddress ?? 'unknown address'
-            }: ${(e as Error).message ?? e}`);
+            if (!(e instanceof NonTlsError)) { // Ignore totally non-TLS traffic
+                console.warn(`TLS fingerprint not available for TLS connection from ${
+                    socket.remoteAddress ?? 'unknown address'
+                }: ${(e as Error).message ?? e}`);
+            }
         }
 
         // Once we have a fingerprint, TLS handshakes can continue as normal:
