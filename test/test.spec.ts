@@ -1,3 +1,5 @@
+import * as path from 'path';
+import * as fs from 'fs';
 import * as net from 'net';
 import * as tls from 'tls';
 import * as https from 'https';
@@ -8,7 +10,8 @@ import { getDeferred, streamToBuffer } from './test-util';
 
 import {
     getTlsFingerprintData,
-    getTlsFingerprintAsJa3
+    getTlsFingerprintAsJa3,
+    calculateJa3FromFingerprintData
 } from '../src/index';
 
 const nodeMajorVersion = parseInt(process.version.slice(1).split('.')[0], 10);
@@ -17,7 +20,7 @@ describe("Read-TLS-Fingerprint", () => {
 
     let server: DestroyableServer<net.Server>;
 
-    afterEach(() => server?.destroy());
+    afterEach(() => server?.destroy().catch(() => {}));
 
     it("can read Node's fingerprint data", async () => {
         server = makeDestroyable(new net.Server());
@@ -124,6 +127,48 @@ describe("Read-TLS-Fingerprint", () => {
         });
 
         expect(ourFingerprint).to.equal(remoteFingerprint);
+    });
+
+    it("can calculate the correct TLS fingerprint from a Chrome request", async () => {
+        const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
+
+        const fingerprintData = await getTlsFingerprintData(incomingData);
+
+        const [
+            tlsVersion,
+            ciphers,
+            extension,
+            groups,
+            curveFormats
+        ] = fingerprintData;
+
+        expect(tlsVersion).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
+        expect(ciphers.slice(0, 3)).to.deep.equal([4865, 4866, 4867]);
+        expect(ciphers.length).to.equal(15);
+        console.log(extension);
+        expect(extension).to.deep.equal([
+            0,
+            23,
+            65281,
+            10,
+            11,
+            35,
+            16,
+            5,
+            13,
+            18,
+            51,
+            45,
+            43,
+            27,
+            17513,
+            21
+        ]);
+        expect(groups).to.deep.equal([29, 23, 24]);
+        expect(curveFormats).to.deep.equal([0]);
+
+        const fingerprint = calculateJa3FromFingerprintData(fingerprintData);
+        expect(fingerprint).to.equal('cd08e31494f9531f560d64c695473da9');
     });
 
 });
