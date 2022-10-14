@@ -2,9 +2,13 @@
 
 > _Part of [HTTP Toolkit](https://httptoolkit.tech): powerful tools for building, testing & debugging HTTP(S)_
 
-A tiny pure-JS module to read TLS fingerprints from an incoming socket connection.
+A pure-JS module to read TLS fingerprints from an incoming socket connection. Tiny, with zero runtime dependencies.
 
 Using this, you can recognize certain TLS clients - e.g. specific browser, cURL, or even the specific versions of a specific programming language a client is using - regardless of the content of the request they send.
+
+See https://httptoolkit.com/blog/tls-fingerprinting-node-js/#how-does-tls-fingerprinting-work for more background on how TLS fingerprinting works.
+
+Be aware that this is _not_ a 100% reliable test. Most clients can modify their TLS fingerprint with a bit of work (though few do). In many cases, it's even possible to mimic another arbitrary fingerprint on demand (e.g. using libraries like [CycleTLS](https://www.npmjs.com/package/cycletls)). Most of the time though, for clients that aren't actively messing with you, the fingerprint will tell you what kind of client is making the connection.
 
 ## Docs
 
