@@ -1,5 +1,7 @@
 import * as stream from 'stream';
 import * as crypto from 'crypto';
+import * as tls from 'tls';
+import * as net from 'net';
 
 const collectBytes = (stream: stream.Readable, byteLength: number) => {
     if (byteLength === 0) return Buffer.from([]);
@@ -164,4 +166,76 @@ export function calculateJa3FromFingerprintData(fingerprintData: TlsFingerprintD
 
 export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
     return calculateJa3FromFingerprintData(await getTlsFingerprintData(rawStream));
+}
+
+interface FingerprintedSocket extends net.Socket {
+    tlsFingerprint?: {
+        data: TlsFingerprintData;
+        ja3: string;
+    }
+}
+
+declare module 'tls' {
+    interface TLSSocket {
+        /**
+         * This module extends the global TLS types so that all TLS sockets may include
+         * TLS fingerprint data.
+         *
+         * This is only set if the socket came from a TLS server where fingerprinting
+         * has been enabled with `enableFingerprinting`.
+         */
+        tlsFingerprint?: {
+            data: TlsFingerprintData;
+            ja3: string;
+        }
+    }
+}
+
+/**
+ * Modify a TLS server, so that the TLS fingerprint is always parsed and attached to all
+ * sockets at the point when the 'secureConnection' event fires.
+ *
+ * This method mutates and returns the TLS server provided. TLS fingerprint data is
+ * available from all TLS sockets afterwards in the `socket.tlsFingerprint` property.
+ *
+ * This will work for all standard uses of a TLS server or similar (e.g. an HTTPS server)
+ * but may behave unpredictably for advanced use cases, e.g. if you are already
+ * manually injecting connections, hooking methods or events or otherwise doing something
+ * funky & complicated. In those cases you probably want to use the fingerprint
+ * calculation methods directly inside your funky logic instead.
+ */
+export function enableFingerprinting(tlsServer: tls.Server) {
+    // Disable the normal TLS 'connection' event listener that triggers TLS setup:
+    const tlsConnectionListener = tlsServer.listeners('connection')[0] as (socket: net.Socket) => {};
+    if (!tlsConnectionListener) throw new Error('TLS server is not listening for connection events');
+    tlsServer.removeListener('connection', tlsConnectionListener);
+
+    // Listen ourselves for connections, get the fingerprint first, then let TLS setup resume:
+    tlsServer.on('connection', async (socket: FingerprintedSocket) => {
+        try {
+            const fingerprintData = await getTlsFingerprintData(socket);
+
+            socket.tlsFingerprint = {
+                data: fingerprintData,
+                ja3: calculateJa3FromFingerprintData(fingerprintData)
+            };
+        } catch (e) {
+            console.warn(`TLS fingerprint not available for TLS connection from ${
+                socket.remoteAddress ?? 'unknown address'
+            }: ${(e as Error).message ?? e}`);
+        }
+
+        // Once we have a fingerprint, TLS handshakes can continue as normal:
+        tlsConnectionListener.call(tlsServer, socket);
+    });
+
+    tlsServer.prependListener('secureConnection', (tlsSocket: tls.TLSSocket) => {
+        const fingerprint = (tlsSocket as unknown as {
+            _parent?: FingerprintedSocket, // Private TLS socket field which points to the source
+        })._parent?.tlsFingerprint;
+
+        tlsSocket.tlsFingerprint = fingerprint;
+    });
+
+    return tlsServer;
 }

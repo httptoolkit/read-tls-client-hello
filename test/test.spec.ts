@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as tls from 'tls';
+import * as http from 'http';
 import * as https from 'https';
 import { makeDestroyable, DestroyableServer } from 'destroyable-server';
 
@@ -16,7 +17,9 @@ import {
 import {
     getTlsFingerprintData,
     getTlsFingerprintAsJa3,
-    calculateJa3FromFingerprintData
+    calculateJa3FromFingerprintData,
+    enableFingerprinting,
+
 } from '../src/index';
 
 const nodeMajorVersion = parseInt(process.version.slice(1).split('.')[0], 10);
@@ -202,10 +205,46 @@ describe("Read-TLS-Fingerprint", () => {
         });
 
         const tlsSocket = await tlsSocketPromise;
-        const fingerprint = (tlsSocket as any).tlsFingerprint;
+        const fingerprint = tlsSocket.tlsFingerprint;
         expect(fingerprint).to.be.oneOf([
             '76cd17e0dc73c98badbb6ee3752dcf4c', // Node 12 - 16
             '6521bd74aad3476cdb3daa827288ec35' // Node 17+
+        ]);
+    });
+
+    it("can be calculated automatically with the provided helper", async () => {
+        const httpsServer = makeDestroyable(
+            enableFingerprinting(
+                https.createServer({ key: testKey, cert: testCert })
+            )
+        );
+        server = httpsServer;
+
+        const tlsSocketPromise = new Promise<tls.TLSSocket>((resolve) =>
+            httpsServer.on('request', (request: http.IncomingMessage) =>
+                resolve(request.socket as tls.TLSSocket)
+            )
+        );
+
+        httpsServer.listen();
+        await new Promise((resolve) => httpsServer.on('listening', resolve));
+
+        const port = (httpsServer.address() as net.AddressInfo).port;
+        https.get({
+            host: 'localhost',
+            ca: [testCert],
+            port
+        }).on('error', () => {}); // No response, we don't care
+
+        const tlsSocket = await tlsSocketPromise;
+        const fingerprint = tlsSocket.tlsFingerprint;
+
+        expect(fingerprint!.data[0]).to.equal(771); // Is definitely a TLS 1.2+ fingerprint
+        expect(fingerprint!.data.length).to.equal(5); // Full data is checked in other tests
+
+        expect(fingerprint!.ja3).to.be.oneOf([
+            '398430069e0a8ecfbc8db0778d658d77', // Node 12 - 16
+            '0cce74b0d9b7f8528fb2181588d23793' // Node 17+
         ]);
     });
 
