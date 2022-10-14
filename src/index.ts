@@ -55,22 +55,26 @@ export type TlsFingerprintData = [
     curveFormats: number[]
 ];
 
-export async function getTlsFingerprintData(rawStream: stream.Readable): Promise<TlsFingerprintData> {
-    // Create a separate stream, which isn't flowing, so we can read byte-by-byte regardless of how else
-    // the stream is being used.
-    const inputStream = new stream.PassThrough();
-    rawStream.pipe(inputStream);
+export async function getTlsFingerprintData(inputStream: stream.Readable): Promise<TlsFingerprintData> {
+    const wasFlowing = inputStream.readableFlowing;
+    if (wasFlowing) inputStream.pause(); // Pause other readers, so we have time to precisely get the data we need.
 
-    const [recordType] = await collectBytes(inputStream, 1);
+    const recordTypeBytes = await collectBytes(inputStream, 1);
+    const [recordType] = recordTypeBytes;
     if (recordType !== 0x16) throw new Error("Can't calculate TLS fingerprint - not a TLS stream");
 
     const tlsRecordVersion = await collectBytes(inputStream, 2);
-    const recordLength = (await collectBytes(inputStream, 2)).readUint16BE();
+    const recordLengthBytes = await collectBytes(inputStream, 2);
+    const recordLength = recordLengthBytes.readUint16BE();
 
     // Collect all the hello bytes, and then give us a stream of exactly only those bytes, so we can
     // still process them step by step in order:
-    const helloDataStream = stream.Readable.from(await collectBytes(inputStream, recordLength), { objectMode: false });
-    rawStream.unpipe(inputStream); // Don't need any more data now, thanks.
+    const recordBytes = await collectBytes(inputStream, recordLength);
+    const helloDataStream = stream.Readable.from(recordBytes, { objectMode: false });
+
+    // Put all the bytes back, so that this stream can still be used to create a real TLS session
+    inputStream.unshift(Buffer.concat([recordTypeBytes, tlsRecordVersion, recordLengthBytes, recordBytes]));
+    if (wasFlowing) inputStream.resume(); // If there were other readers, resume and let them continue
 
     const [helloType] = (await collectBytes(helloDataStream, 1));
     if (helloType !== 0x1) throw new Error("Can't calculate TLS fingerprint - not a TLS client hello");

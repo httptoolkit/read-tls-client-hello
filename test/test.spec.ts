@@ -6,7 +6,12 @@ import * as https from 'https';
 import { makeDestroyable, DestroyableServer } from 'destroyable-server';
 
 import { expect } from 'chai';
-import { getDeferred, streamToBuffer } from './test-util';
+import {
+    getDeferred,
+    streamToBuffer,
+    testKey,
+    testCert
+} from './test-util';
 
 import {
     getTlsFingerprintData,
@@ -145,7 +150,6 @@ describe("Read-TLS-Fingerprint", () => {
         expect(tlsVersion).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
         expect(ciphers.slice(0, 3)).to.deep.equal([4865, 4866, 4867]);
         expect(ciphers.length).to.equal(15);
-        console.log(extension);
         expect(extension).to.deep.equal([
             0,
             23,
@@ -169,6 +173,40 @@ describe("Read-TLS-Fingerprint", () => {
 
         const fingerprint = calculateJa3FromFingerprintData(fingerprintData);
         expect(fingerprint).to.equal('cd08e31494f9531f560d64c695473da9');
+    });
+
+    it("can be calculated manually alongside a real TLS session", async () => {
+        const tlsServer = tls.createServer({ key: testKey, cert: testCert })
+        server = makeDestroyable(new net.Server());
+
+        server.on('connection', async (socket: any) => {
+            socket.tlsFingerprint = await getTlsFingerprintAsJa3(socket);
+            tlsServer.emit('connection', socket);
+        });
+
+        const tlsSocketPromise = new Promise<tls.TLSSocket>((resolve) =>
+            tlsServer.on('secureConnection', (tlsSocket: any) => {
+                tlsSocket.tlsFingerprint = tlsSocket._parent.tlsFingerprint;
+                resolve(tlsSocket);
+            })
+        );
+
+        server.listen();
+        await new Promise((resolve) => server.on('listening', resolve));
+
+        const port = (server.address() as net.AddressInfo).port;
+        tls.connect({
+            host: 'localhost',
+            ca: [testCert],
+            port
+        });
+
+        const tlsSocket = await tlsSocketPromise;
+        const fingerprint = (tlsSocket as any).tlsFingerprint;
+        expect(fingerprint).to.be.oneOf([
+            '76cd17e0dc73c98badbb6ee3752dcf4c', // Node 12 - 16
+            '6521bd74aad3476cdb3daa827288ec35' // Node 17+
+        ]);
     });
 
 });
