@@ -283,4 +283,47 @@ describe("Read-TLS-Fingerprint", () => {
         expect(response.statusCode).to.equal(200);
     });
 
+    it("can read a TLS v1 fingerprint", async function () {
+        if (nodeMajorVersion >= 17) this.skip(); // New Node doesn't support this
+
+        server = makeDestroyable(new net.Server());
+
+        server.listen();
+        await new Promise((resolve) => server.on('listening', resolve));
+
+        let incomingSocketPromise = getDeferred<net.Socket>();
+        server.on('connection', (socket) => incomingSocketPromise.resolve(socket));
+
+        const port = (server.address() as net.AddressInfo).port;
+        tls.connect({
+            host: 'localhost',
+            port,
+            maxVersion: 'TLSv1', // <-- Force old TLS
+            minVersion: 'TLSv1'
+        }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
+
+        const incomingSocket = await incomingSocketPromise;
+        const fingerprint = await getTlsFingerprintData(incomingSocket);
+
+        const [
+            tlsVersion,
+            ciphers,
+            extension,
+            groups,
+            curveFormats
+        ] = fingerprint;
+
+        expect(tlsVersion).to.equal(769); // TLS 1!
+        expect(ciphers.slice(0, 3)).to.deep.equal([49162, 49172, 57]);
+        expect(extension).to.deep.equal([
+            11,
+            10,
+            35,
+            22,
+            23
+        ]);
+        expect(groups).to.deep.equal([29, 23, 30, 25, 24]);
+        expect(curveFormats).to.deep.equal([0, 1, 2]);
+    });
+
 });
