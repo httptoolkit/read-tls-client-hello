@@ -1,6 +1,6 @@
 {
   "name": "read-tls-fingerprint",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "author": "Tim Perry <tim@httptoolkit.com>",
   "description": "A pure-JS module to read TLS fingerprints from an incoming socket connection",
   "main": "./dist/index.js",
