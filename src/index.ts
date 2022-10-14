@@ -43,7 +43,19 @@ const collectBytes = (stream: stream.Readable, byteLength: number) => {
 const getUint16BE = (buffer: Buffer, offset: number) =>
     (buffer[offset] << 8) + buffer[offset+1];
 
-export async function getTlsFingerprintData(rawStream: stream.Readable) {
+// https://datatracker.ietf.org/doc/html/draft-davidben-tls-grease-01 defines GREASE values for various
+// TLS fields, reserving 0a0a, 1a1a, 2a2a, etc for ciphers, extension ids & supported groups.
+const isGREASE = (value: number) => (value & 0x0f0f) == 0x0a0a;
+
+export type TlsFingerprintData = [
+    tlsVersion: number,
+    ciphers: number[],
+    extensions: number[],
+    groups: number[],
+    curveFormats: number[]
+];
+
+export async function getTlsFingerprintData(rawStream: stream.Readable): Promise<TlsFingerprintData> {
     // Create a separate stream, which isn't flowing, so we can read byte-by-byte regardless of how else
     // the stream is being used.
     const inputStream = new stream.PassThrough();
@@ -100,10 +112,14 @@ export async function getTlsFingerprintData(rawStream: stream.Readable) {
 
     const cipherFingerprint: number[] = [];
     for (let i = 0; i < cipherSuites.length; i += 2) {
-        cipherFingerprint.push(getUint16BE(cipherSuites, i));
+        const cipherId = getUint16BE(cipherSuites, i);
+        if (isGREASE(cipherId)) continue;
+        cipherFingerprint.push(cipherId);
     }
 
-    const extensionsFingerprint: number[] = extensions.map(({ id }) => getUint16BE(id, 0));
+    const extensionsFingerprint: number[] = extensions
+        .map(({ id }) => getUint16BE(id, 0))
+        .filter(id => !isGREASE(id));
 
     const supportedGroupsData = (
         extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x0a])))?.data
@@ -112,7 +128,9 @@ export async function getTlsFingerprintData(rawStream: stream.Readable) {
 
     const groupsFingerprint: number[] = [];
     for (let i = 0; i < supportedGroupsData.length; i += 2) {
-        groupsFingerprint.push(getUint16BE(supportedGroupsData, i));
+        const groupId = getUint16BE(supportedGroupsData, i)
+        if (isGREASE(groupId)) continue;
+        groupsFingerprint.push(groupId);
     }
 
     const curveFormatsData = extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x0b])))?.data
@@ -125,12 +143,10 @@ export async function getTlsFingerprintData(rawStream: stream.Readable) {
         extensionsFingerprint,
         groupsFingerprint,
         curveFormatsFingerprint
-    ] as const;
+    ];
 }
 
-export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
-    const fingerprintData = await getTlsFingerprintData(rawStream);
-
+export function calculateJa3FromFingerprintData(fingerprintData: TlsFingerprintData) {
     const fingerprintString = [
         fingerprintData[0],
         fingerprintData[1].join('-'),
@@ -140,4 +156,8 @@ export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
     ].join(',');
 
     return crypto.createHash('md5').update(fingerprintString).digest('hex');
+}
+
+export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
+    return calculateJa3FromFingerprintData(await getTlsFingerprintData(rawStream));
 }
