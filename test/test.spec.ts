@@ -76,6 +76,28 @@ describe("Read-TLS-Client-Hello", () => {
         expect(curveFormats).to.deep.equal([0, 1, 2]);
     });
 
+    it("can read Node's client hello data", async () => {
+        server = makeDestroyable(new net.Server());
+
+        server.listen();
+        await new Promise((resolve) => server.on('listening', resolve));
+
+        let incomingSocketPromise = getDeferred<net.Socket>();
+        server.on('connection', (socket) => incomingSocketPromise.resolve(socket));
+
+        const port = (server.address() as net.AddressInfo).port;
+        tls.connect({
+            host: 'localhost',
+            port
+        }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
+
+        const incomingSocket = await incomingSocketPromise;
+        const { serverName, alpnProtocols } = await readTlsClientHello(incomingSocket);
+
+        expect(serverName).to.equal(undefined); // No SNI set for pure TLS like this
+        expect(alpnProtocols).to.equal(undefined); // No SNI set for pure TLS like this
+    });
+
     it("can read Node's JA3 fingerprint", async () => {
         server = makeDestroyable(new net.Server());
 
@@ -142,6 +164,16 @@ describe("Read-TLS-Client-Hello", () => {
 
         const { serverName } = await readTlsClientHello(incomingData);
         expect(serverName).to.equal('localhost');
+    });
+
+    it("can capture ALPN protocols from a Chrome request", async () => {
+        const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
+
+        const { alpnProtocols } = await readTlsClientHello(incomingData);
+        expect(alpnProtocols).to.deep.equal([
+            'h2',
+            'http/1.1'
+        ]);
     });
 
     it("can calculate the correct TLS fingerprint from a Chrome request", async () => {
