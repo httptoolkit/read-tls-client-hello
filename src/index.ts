@@ -56,6 +56,7 @@ const isGREASE = (value: number) => (value & 0x0f0f) == 0x0a0a;
 
 export type TlsHelloData = {
     serverName: string | undefined;
+    alpnProtocols: string[] | undefined;
     fingerprintData: TlsFingerprintData;
 };
 
@@ -136,6 +137,26 @@ function parseSniData(data: Buffer) {
 
     // No data, or no names with DNS hostname type.
     return undefined;
+}
+
+function parseAlpnData(data: Buffer) {
+    const protocols: string[] = [];
+
+    const listLength = data.readUInt16BE();
+    if (listLength !== data.byteLength - 2) {
+        throw new Error('Invalid length for ALPN list');
+    }
+
+    let offset = 2;
+    while (offset < data.byteLength) {
+        const nameLength = data[offset];
+        offset += 1;
+        const name = data.slice(offset, offset + nameLength).toString('ascii');
+        offset += nameLength;
+        protocols.push(name);
+    }
+
+    return protocols;
 }
 
 export async function readTlsClientHello(inputStream: stream.Readable): Promise<TlsHelloData> {
@@ -237,13 +258,18 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
 
     // And capture other client hello data that might be interesting:
     const sniExtensionData = extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x0])))?.data;
-
     const serverName = sniExtensionData
         ? parseSniData(sniExtensionData)
         : undefined;
 
+    const alpnExtensionData = extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x10])))?.data;
+    const alpnProtocols = alpnExtensionData
+        ? parseAlpnData(alpnExtensionData)
+        : undefined;
+
     return {
         serverName,
+        alpnProtocols,
         fingerprintData
     };
 }
