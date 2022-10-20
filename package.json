@@ -1,5 +1,5 @@
 {
-  "name": "read-tls-fingerprint",
+  "name": "read-tls-client-hello",
   "version": "1.0.0",
   "author": "Tim Perry <tim@httptoolkit.com>",
   "description": "A pure-JS module to read TLS fingerprints from an incoming socket connection",
@@ -28,12 +28,12 @@
   "licenses": [
     {
       "type": "Apache-2.0",
-      "url": "http://github.com/httptoolkit/read-tls-fingerprint/raw/main/LICENSE"
+      "url": "http://github.com/httptoolkit/read-tls-client-hello/raw/main/LICENSE"
     }
   ],
   "repository": {
     "type": "git",
-    "url": "http://github.com/httptoolkit/read-tls-fingerprint.git"
+    "url": "http://github.com/httptoolkit/read-tls-client-hello.git"
   },
   "dependencies": {
     "@types/node": "*"
