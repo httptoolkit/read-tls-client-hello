@@ -1,14 +1,14 @@
-# Read-TLS-Fingerprint [![Build Status](https://github.com/httptoolkit/read-tls-fingerprint/workflows/CI/badge.svg)](https://github.com/httptoolkit/read-tls-fingerprint/actions) [![Available on NPM](https://img.shields.io/npm/v/read-tls-fingerprint.svg)](https://npmjs.com/package/read-tls-fingerprint)
+# Read-TLS-Client-Hello [![Build Status](https://github.com/httptoolkit/read-tls-client-hello/workflows/CI/badge.svg)](https://github.com/httptoolkit/read-tls-client-hello/actions) [![Available on NPM](https://img.shields.io/npm/v/read-tls-client-hello.svg)](https://npmjs.com/package/read-tls-client-hello)
 
 > _Part of [HTTP Toolkit](https://httptoolkit.tech): powerful tools for building, testing & debugging HTTP(S)_
 
-A pure-JS module to read TLS fingerprints from an incoming socket connection. Tiny, with zero runtime dependencies.
+A pure-JS module to read TLS client hello data and calculate TLS fingerprints from an incoming socket connection. Tiny, with zero runtime dependencies.
 
-Using this, you can recognize certain TLS clients - e.g. specific browser, cURL, or even the specific versions of a specific programming language a client is using - regardless of the content of the request they send.
+Using this, you can analyze incoming TLS connections before you start a full handshake, and using their fingerprints you can recognize certain TLS clients - e.g. specific browser, cURL, or even the specific versions of a specific programming language a client is using - regardless of the content of the request they send.
 
-See https://httptoolkit.com/blog/tls-fingerprinting-node-js/#how-does-tls-fingerprinting-work for more background on how TLS fingerprinting works.
+See https://httptoolkit.com/blog/tls-client-helloing-node-js/#how-does-tls-client-helloing-work for more background on how TLS fingerprinting works.
 
-Be aware that this is _not_ a 100% reliable test. Most clients can modify their TLS fingerprint with a bit of work (though few do). In many cases, it's even possible to mimic another arbitrary fingerprint on demand (e.g. using libraries like [CycleTLS](https://www.npmjs.com/package/cycletls)). Most of the time though, for clients that aren't actively messing with you, the fingerprint will tell you what kind of client is making the connection.
+Be aware that fingerprinting is _not_ a 100% reliable test. Most clients can modify their TLS fingerprint with a bit of work (though few do). In many cases, it's even possible to mimic another arbitrary fingerprint on demand (e.g. using libraries like [CycleTLS](https://www.npmjs.com/package/cycletls)). Most of the time though, for clients that aren't actively messing with you, the fingerprint will tell you what kind of client is making the connection.
 
 ## Docs
 
