@@ -18,7 +18,7 @@ import {
     readTlsClientHello,
     getTlsFingerprintAsJa3,
     calculateJa3FromFingerprintData,
-    enableFingerprinting,
+    trackClientHellos,
 
 } from '../src/index';
 
@@ -217,7 +217,7 @@ describe("Read-TLS-Client-Hello", () => {
         expect(fingerprint).to.equal('cd08e31494f9531f560d64c695473da9');
     });
 
-    it("can be calculated manually alongside a real TLS session", async () => {
+    it("can be manually calculate the fingerprint alongside a real TLS session", async () => {
         const tlsServer = tls.createServer({ key: testKey, cert: testCert })
         server = makeDestroyable(new net.Server());
 
@@ -243,7 +243,7 @@ describe("Read-TLS-Client-Hello", () => {
             port
         });
 
-        const tlsSocket = await tlsSocketPromise;
+        const tlsSocket: any = await tlsSocketPromise;
         const fingerprint = tlsSocket.tlsFingerprint;
         expect(fingerprint).to.be.oneOf([
             '76cd17e0dc73c98badbb6ee3752dcf4c', // Node 12 - 16
@@ -251,9 +251,9 @@ describe("Read-TLS-Client-Hello", () => {
         ]);
     });
 
-    it("can be calculated automatically with the provided helper", async () => {
+    it("can be parsed automatically with the provided helper", async () => {
         const httpsServer = makeDestroyable(
-            enableFingerprinting(
+            trackClientHellos(
                 https.createServer({ key: testKey, cert: testCert })
             )
         );
@@ -276,12 +276,15 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // No response, we don't care
 
         const tlsSocket = await tlsSocketPromise;
-        const fingerprint = tlsSocket.tlsFingerprint;
+        const helloData = tlsSocket.tlsClientHello!;
 
-        expect(fingerprint!.data[0]).to.equal(771); // Is definitely a TLS 1.2+ fingerprint
-        expect(fingerprint!.data.length).to.equal(5); // Full data is checked in other tests
+        expect(helloData.serverName).to.equal('localhost');
+        expect(helloData.alpnProtocols).to.deep.equal(undefined);
 
-        expect(fingerprint!.ja3).to.be.oneOf([
+        expect(helloData.fingerprintData[0]).to.equal(771); // Is definitely a TLS 1.2+ fingerprint
+        expect(helloData.fingerprintData.length).to.equal(5); // Full data is checked in other tests
+
+        expect(helloData.ja3).to.be.oneOf([
             '398430069e0a8ecfbc8db0778d658d77', // Node 12 - 16
             '0cce74b0d9b7f8528fb2181588d23793' // Node 17+
         ]);
