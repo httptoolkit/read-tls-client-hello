@@ -12,11 +12,26 @@ Be aware that fingerprinting is _not_ a 100% reliable test. Most clients can mod
 
 ## Docs
 
-The easiest way to use this is with the exported `enableFingerprinting` helper, which can be applied to any `tls.TLSServer` instance, including `https.Server` instances, like so:
+### Reading a TLS client hello
+
+To read all available data from a TLS client hello, pass a stream (e.g. a `net.Socket`) to the exported `readTlsClientHello(stream)`, before the TLS handshake (or any other processing) starts. This returns a promise containing all data parsed from the client hello.
+
+This method reads the initial data from the socket, parses it, and then unshifts it back into the socket, so that once the returned promise resolves the stream can be used like new, to start a normal TLS session using the same client hello.
+
+If parsing fails, this method will throw an error, but will still ensure all data is returned to the socket first, so that non-TLS streams can also be processed as normal.
+
+The returned promise resolves to an object, containing:
+
+* `serverName` - The server name requested in the client hello (or undefined if SNI was not used)
+* `fingerprintData` - The raw components used for JA3 TLS fingerprinting (see the next section)
+
+### TLS fingerprinting
+
+The easiest way to use this for fingerprinting is with the exported `enableFingerprinting` helper, which can be applied to any `tls.TLSServer` instance, including `https.Server` instances, like so:
 
 ```javascript
 const https = require('https');
-const { enableFingerprinting } = require('read-tls-fingerprint');
+const { enableFingerprinting } = require('read-tls-client-hello');
 
 const server = new https.Server({ /* your TLS options etc */ });
 
@@ -40,6 +55,6 @@ The `tlsFingerprint` property contains two fields:
 
 It is also possible to calculate TLS fingerprints manually. The module exports a few methods for this:
 
-* `getTlsFingerprintData(stream)` - Reads from a stream of incoming TLS client data, returning a promise for the raw fingerprint data, and unshifting the data back into the stream when it's done. Nothing else should attempt to read from the stream until the returned promise resolves (i.e. don't start TLS negotiation until this completes).
-* `getTlsFingerprintAsJa3` - Reads from a stream like `getTlsFingerprintData` but returns a promise for the JA3 hash, instead of raw data.
+* `readTlsClientHello(stream)` - Reads from a stream of incoming TLS client data, returning a promise for parsed TLS hello, and unshifting the data back into the stream when it's done. Nothing else should attempt to read from the stream until the returned promise resolves (i.e. don't start TLS negotiation until this completes). The `fingerprintData` of the resulting value contains the raw fingerprint components.
+* `getTlsFingerprintAsJa3` - Reads from a stream, just like `readTlsClientHello`, but returns a promise for the JA3 hash, instead of raw hello data.
 * `calculateJa3FromFingerprintData(data)` - Takes raw TLS fingerprint data, and returns the corresponding JA3 hash.

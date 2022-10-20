@@ -54,6 +54,11 @@ const getUint16BE = (buffer: Buffer, offset: number) =>
 // TLS fields, reserving 0a0a, 1a1a, 2a2a, etc for ciphers, extension ids & supported groups.
 const isGREASE = (value: number) => (value & 0x0f0f) == 0x0a0a;
 
+export type TlsHelloData = {
+    serverName: string | undefined;
+    fingerprintData: TlsFingerprintData;
+};
+
 export type TlsFingerprintData = [
     tlsVersion: number,
     ciphers: number[],
@@ -107,7 +112,33 @@ async function extractTlsHello(inputStream: stream.Readable): Promise<Buffer> {
     }
 }
 
-export async function getTlsFingerprintData(inputStream: stream.Readable): Promise<TlsFingerprintData> {
+function parseSniData(data: Buffer) {
+    // SNI is almost always just one value - and is arguably required to be, since there's only one type
+    // in the RFC and you're only allowed one name per type, but it's still structured as a list:
+    let offset = 0;
+    while (offset < data.byteLength) {
+        const entryLength = data.readUInt16BE(offset);
+        offset += 2;
+        const entryType = data[offset];
+        offset += 1;
+        const nameLength = data.readUInt16BE(offset);
+        offset += 2;
+
+        if (nameLength !== entryLength - 3) {
+            throw new Error('Invalid length in SNI entry');
+        }
+
+        const name = data.slice(offset, offset + nameLength).toString('ascii');
+        offset += nameLength;
+
+        if (entryType === 0x0) return name;
+    }
+
+    // No data, or no names with DNS hostname type.
+    return undefined;
+}
+
+export async function readTlsClientHello(inputStream: stream.Readable): Promise<TlsHelloData> {
     const wasFlowing = inputStream.readableFlowing;
     if (wasFlowing) inputStream.pause(); // Pause other readers, so we have time to precisely get the data we need.
 
@@ -164,7 +195,7 @@ export async function getTlsFingerprintData(inputStream: stream.Readable): Promi
         readExtensionsDataLength += 4 + extensionLength;
     }
 
-    // All data parsed! Now turn it into the fingerprint format:
+    // All data received & parsed! Now turn it into the fingerprint format:
     //SSLVersion,Cipher,SSLExtension,EllipticCurve,EllipticCurvePointFormat
 
     const tlsVersionFingerprint = clientTlsVersion.readUint16BE()
@@ -196,13 +227,25 @@ export async function getTlsFingerprintData(inputStream: stream.Readable): Promi
         ?? Buffer.from([]);
     const curveFormatsFingerprint: number[] = Array.from(curveFormatsData.slice(1)); // Drop length prefix
 
-    return [
+    const fingerprintData = [
         tlsVersionFingerprint,
         cipherFingerprint,
         extensionsFingerprint,
         groupsFingerprint,
         curveFormatsFingerprint
-    ];
+    ] as TlsFingerprintData;
+
+    // And capture other client hello data that might be interesting:
+    const sniExtensionData = extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x0])))?.data;
+
+    const serverName = sniExtensionData
+        ? parseSniData(sniExtensionData)
+        : undefined;
+
+    return {
+        serverName,
+        fingerprintData
+    };
 }
 
 export function calculateJa3FromFingerprintData(fingerprintData: TlsFingerprintData) {
@@ -218,7 +261,9 @@ export function calculateJa3FromFingerprintData(fingerprintData: TlsFingerprintD
 }
 
 export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
-    return calculateJa3FromFingerprintData(await getTlsFingerprintData(rawStream));
+    return calculateJa3FromFingerprintData(
+        (await readTlsClientHello(rawStream)).fingerprintData
+    );
 }
 
 interface FingerprintedSocket extends net.Socket {
@@ -266,7 +311,7 @@ export function enableFingerprinting(tlsServer: tls.Server) {
     // Listen ourselves for connections, get the fingerprint first, then let TLS setup resume:
     tlsServer.on('connection', async (socket: FingerprintedSocket) => {
         try {
-            const fingerprintData = await getTlsFingerprintData(socket);
+            const { fingerprintData } = await readTlsClientHello(socket);
 
             socket.tlsFingerprint = {
                 data: fingerprintData,
