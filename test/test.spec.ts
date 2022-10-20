@@ -15,7 +15,7 @@ import {
 } from './test-util';
 
 import {
-    getTlsFingerprintData,
+    readTlsClientHello,
     getTlsFingerprintAsJa3,
     calculateJa3FromFingerprintData,
     enableFingerprinting,
@@ -24,7 +24,7 @@ import {
 
 const nodeMajorVersion = parseInt(process.version.slice(1).split('.')[0], 10);
 
-describe("Read-TLS-Fingerprint", () => {
+describe("Read-TLS-Client-Hello", () => {
 
     let server: DestroyableServer<net.Server>;
 
@@ -46,7 +46,7 @@ describe("Read-TLS-Fingerprint", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const fingerprint = await getTlsFingerprintData(incomingSocket);
+        const { fingerprintData } = await readTlsClientHello(incomingSocket);
 
         const [
             tlsVersion,
@@ -54,7 +54,7 @@ describe("Read-TLS-Fingerprint", () => {
             extension,
             groups,
             curveFormats
-        ] = fingerprint;
+        ] = fingerprintData;
 
         expect(tlsVersion).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
         expect(ciphers.slice(0, 3)).to.deep.equal([4866, 4867, 4865]);
@@ -137,10 +137,17 @@ describe("Read-TLS-Fingerprint", () => {
         expect(ourFingerprint).to.equal(remoteFingerprint);
     });
 
+    it("can capture the server name from a Chrome request", async () => {
+        const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
+
+        const { serverName } = await readTlsClientHello(incomingData);
+        expect(serverName).to.equal('localhost');
+    });
+
     it("can calculate the correct TLS fingerprint from a Chrome request", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
 
-        const fingerprintData = await getTlsFingerprintData(incomingData);
+        const { fingerprintData } = await readTlsClientHello(incomingData);
 
         const [
             tlsVersion,
@@ -303,7 +310,7 @@ describe("Read-TLS-Fingerprint", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const fingerprint = await getTlsFingerprintData(incomingSocket);
+        const { fingerprintData } = await readTlsClientHello(incomingSocket);
 
         const [
             tlsVersion,
@@ -311,7 +318,7 @@ describe("Read-TLS-Fingerprint", () => {
             extension,
             groups,
             curveFormats
-        ] = fingerprint;
+        ] = fingerprintData;
 
         expect(tlsVersion).to.equal(769); // TLS 1!
         expect(ciphers.slice(0, 3)).to.deep.equal([49162, 49172, 57]);
