@@ -1,6 +1,6 @@
 {
   "name": "read-tls-client-hello",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Tim Perry <tim@httptoolkit.com>",
   "description": "A pure-JS module to read TLS client hello data and fingerprints from an incoming socket connection",
   "main": "./dist/index.js",
