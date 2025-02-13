@@ -26,7 +26,9 @@
     "client-hello",
     "alpn",
     "sni",
-    "https"
+    "https",
+    "ja3",
+    "ja4"
   ],
   "licenses": [
     {
