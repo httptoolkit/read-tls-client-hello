@@ -310,7 +310,7 @@ export interface Ja4Data {
     sni: string; // SNI value or 'i' for IP
     cipherCount: number;
     extensionCount: number;
-    alpn: string; // First ALPN value or '00' if none
+    alpn: string; // First and last character of the ALPN value or '00' if none
     cipherSuites: number[];
     extensions: number[];
     sigAlgorithms: number[];
@@ -328,10 +328,14 @@ export function calculateJa4FromHelloData(
     
     // Handle different ALPN protocols
     let alpn = '00';
-    if (alpnProtocols) {
-        if (alpnProtocols.includes('h2')) alpn = 'h2';
-        else if (alpnProtocols.includes('http/1.1')) alpn = 'h1';
-        else if (alpnProtocols.includes('h3')) alpn = 'h3';
+    if (alpnProtocols && alpnProtocols.length > 0) {
+        const firstProtocol = alpnProtocols[0];
+        if (firstProtocol) {
+            // Take first and last character of the protocol string
+            alpn = firstProtocol.length >= 2 
+                ? `${firstProtocol[0]}${firstProtocol[firstProtocol.length - 1]}`
+                : '00';
+        }
     }
     
     // Format numbers as fixed-width hex
