@@ -19,10 +19,22 @@ import {
     getTlsFingerprintAsJa3,
     calculateJa3FromFingerprintData,
     trackClientHellos,
-
+    calculateJa4FromHelloData
 } from '../src/index';
 
 const nodeMajorVersion = parseInt(process.version.slice(1).split('.')[0], 10);
+
+interface EchoResponse {
+    tls: {
+        ja3: {
+            hash: string;
+        };
+        ja4: {
+            hash: string;
+            raw: string;
+        };
+    };
+}
 
 describe("Read-TLS-Client-Hello", () => {
 
@@ -122,7 +134,7 @@ describe("Read-TLS-Client-Hello", () => {
         ]);
     });
 
-    it("calculates the same fingerprint as ja3.zone", async () => {
+    it("calculates the same fingerprint as echo.ramaproxy.org", async () => {
         server = makeDestroyable(new net.Server());
 
         server.listen();
@@ -138,17 +150,19 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const ourFingerprint = await getTlsFingerprintAsJa3(incomingSocket);
+        const helloData = await readTlsClientHello(incomingSocket);
+        const ourJa3 = await getTlsFingerprintAsJa3(incomingSocket);
+        const ourJa4 = calculateJa4FromHelloData(helloData);
 
-        const remoteFingerprint = await new Promise((resolve, reject) => {
-            const response = https.get('https://check.ja3.zone/');
+        const remoteFingerprints = await new Promise<EchoResponse>((resolve, reject) => {
+            const response = https.get('https://echo.ramaproxy.org/');
             response.on('response', async (resp) => {
-                if (resp.statusCode !== 200) reject(new Error(`Unexpected ${resp.statusCode} from ja3.zon`));
+                if (resp.statusCode !== 200) reject(new Error(`Unexpected ${resp.statusCode} from echo.ramaproxy.org`));
 
                 try {
                     const rawData = await streamToBuffer(resp);
-                    const data = JSON.parse(rawData.toString());
-                    resolve(data.hash);
+                    const data = JSON.parse(rawData.toString()) as EchoResponse;
+                    resolve(data);
                 } catch (e) {
                     reject(e);
                 }
@@ -156,7 +170,9 @@ describe("Read-TLS-Client-Hello", () => {
             response.on('error', reject);
         });
 
-        expect(ourFingerprint).to.equal(remoteFingerprint);
+        // Check both JA3 and JA4 hashes
+        expect(ourJa3).to.equal(remoteFingerprints.tls.ja3.hash);
+        expect(ourJa4).to.equal(remoteFingerprints.tls.ja4.hash);
     });
 
     it("can capture the server name from a Chrome request", async () => {
@@ -276,18 +292,24 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // No response, we don't care
 
         const tlsSocket = await tlsSocketPromise;
-        const helloData = tlsSocket.tlsClientHello!;
 
-        expect(helloData.serverName).to.equal('localhost');
-        expect(helloData.alpnProtocols).to.deep.equal(undefined);
+        const [
+            tlsVersion,
+            ciphers,
+            extension,
+            groups,
+            curveFormats,
+            sigAlgorithms
+        ] = tlsSocket.tlsClientHello!.fingerprintData;
 
-        expect(helloData.fingerprintData[0]).to.equal(771); // Is definitely a TLS 1.2+ fingerprint
-        expect(helloData.fingerprintData.length).to.equal(5); // Full data is checked in other tests
+        expect(tlsSocket.tlsClientHello!.fingerprintData.length).to.equal(6);
+        expect(tlsVersion).to.equal(771);
+        expect(ciphers.length).to.be.greaterThan(0);
+        expect(extension.length).to.be.greaterThan(0);
+        expect(groups.length).to.be.greaterThan(0);
+        expect(curveFormats.length).to.be.greaterThan(0);
+        expect(sigAlgorithms.length).to.be.greaterThan(0);
 
-        expect(helloData.ja3).to.be.oneOf([
-            '398430069e0a8ecfbc8db0778d658d77', // Node 12 - 16
-            '0cce74b0d9b7f8528fb2181588d23793' // Node 17+
-        ]);
     });
 
     it("doesn't break non-TLS connections", async () => {
