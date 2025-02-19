@@ -57,6 +57,7 @@ The returned promise resolves to an object, containing:
 To calculate TLS fingerprints manually, there are a few options exported from this module:
 
 * `getTlsFingerprintAsJa3` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA3 hash string, e.g. `cd08e31494f9531f560d64c695473da9`, instead of the raw hello components.
-* `readTlsClientHello(stream)` - Reads the entire hello (see above). In the returned object, you can read the raw data components used for fingerprinting from the `fingerprintData` property.
+* `getTlsFingerprintAsJa4` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA4 hash string, e.g. `t13d591000_a33745022dd6_1f22a2ca17c4`, instead of the raw hello components.
+* `readTlsClientHello(stream)` - Reads the entire hello (see above). In the returned object, you can read the raw data components used for JA3 fingerprinting from the `fingerprintData` property.
 * `calculateJa3FromFingerprintData(data)` - Takes raw TLS fingerprint data, and returns the corresponding JA3 hash.
-* `calculateJa4FromHelloData(data)` - Takes the hello data, the serverName and the alpnProtocols returned by `readTlsClientHello`, and returns the corresponding JA4 hash, eg. `t13d591000_a33745022dd6_1f22a2ca17c4`.
+* `calculateJa4FromHelloData(data)` - Takes the full hello data, including the serverName, alpnProtocols & fingerprinting parameters returned by `readTlsClientHello`, and returns the corresponding JA4 hash, eg. `t13d591000_a33745022dd6_1f22a2ca17c4`.

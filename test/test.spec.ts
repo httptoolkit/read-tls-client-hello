@@ -17,6 +17,7 @@ import {
 import {
     readTlsClientHello,
     getTlsFingerprintAsJa3,
+    getTlsFingerprintAsJa4,
     calculateJa3FromFingerprintData,
     trackClientHellos,
     calculateJa4FromHelloData
@@ -131,6 +132,30 @@ describe("Read-TLS-Client-Hello", () => {
         expect(fingerprint).to.be.oneOf([
             '398430069e0a8ecfbc8db0778d658d77', // Node 12 - 16
             '0cce74b0d9b7f8528fb2181588d23793' // Node 17+
+        ]);
+    });
+
+    it("can read Node's JA4 fingerprint", async () => {
+        server = makeDestroyable(new net.Server());
+
+        server.listen();
+        await new Promise((resolve) => server.on('listening', resolve));
+
+        let incomingSocketPromise = getDeferred<net.Socket>();
+        server.on('connection', (socket) => incomingSocketPromise.resolve(socket));
+
+        const port = (server.address() as net.AddressInfo).port;
+        https.request({
+            host: 'localhost',
+            port
+        }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
+
+        const incomingSocket = await incomingSocketPromise;
+        const fingerprint = await getTlsFingerprintAsJa4(incomingSocket);
+
+        expect(fingerprint).to.be.oneOf([
+            't13d591000_a33745022dd6_5ac7197df9d2', // Node 12 - 16
+            't13d591000_a33745022dd6_1f22a2ca17c4' // Node 17+
         ]);
     });
 

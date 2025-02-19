@@ -388,6 +388,12 @@ export function calculateJa4FromHelloData(
     return `${ja4_a}_${cipherHash}_${extensionHash}`;
 }
 
+export async function getTlsFingerprintAsJa4(rawStream: stream.Readable) {
+    return calculateJa4FromHelloData(
+        (await readTlsClientHello(rawStream))
+    );
+}
+
 interface SocketWithHello extends net.Socket {
     tlsClientHello?: TlsHelloData & {
         ja3: string;
