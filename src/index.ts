@@ -305,9 +305,9 @@ export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
 }
 
 export interface Ja4Data {
-    protocol: 't' | 'q' | 'd'; // TLS, QUIC, DTLS
-    version: '12' | '13'; // TLS 1.2 or 1.3
-    sni: string; // SNI value or 'i' for IP
+    protocol: 't' | 'q' | 'd'; // TLS, QUIC, DTLS (only TLS supported for now)
+    version: '10' | ' 11' | '12' | '13'; // TLS version
+    sni: 'd' | 'i'; // 'd' if a domain was provided via SNI, 'i' otherwise (for IP)
     cipherCount: number;
     extensionCount: number;
     alpn: string; // First and last character of the ALPN value or '00' if none
@@ -319,23 +319,30 @@ export interface Ja4Data {
 export function calculateJa4FromHelloData(
     { serverName, alpnProtocols, fingerprintData }: TlsHelloData
 ): string {
-    const [ , ciphers, extensions, , , sigAlgorithms] = fingerprintData;
+    const [tlsVersion, ciphers, extensions, , , sigAlgorithms] = fingerprintData;
 
     // Part A: Protocol info
     const protocol = 't'; // We only handle TCP for now
-    const version = extensions.includes(43) ? '13' : '12'; // Extension 43 is supported_versions
+
+    const version = extensions.includes(0x002B)
+        ? '13' // TLS 1.3 uses the supported versions extension, and 1.4+ doesn't exist (yet)
+        : { // Previous TLS sets the version in the handshake up front:
+            0x0303: '12',
+            0x0302: '11',
+            0x0301: '10'
+        }[tlsVersion]
+        ?? '00'; // Other unknown version
+
     const sni = !serverName ? 'i' : 'd'; // 'i' for IP (no SNI), 'd' for domain
 
     // Handle different ALPN protocols
     let alpn = '00';
-    if (alpnProtocols && alpnProtocols.length > 0) {
-        const firstProtocol = alpnProtocols[0];
-        if (firstProtocol) {
-            // Take first and last character of the protocol string
-            alpn = firstProtocol.length >= 2 
-                ? `${firstProtocol[0]}${firstProtocol[firstProtocol.length - 1]}`
-                : '00';
-        }
+    const firstProtocol = alpnProtocols?.[0];
+    if (firstProtocol && firstProtocol.length >= 1) {
+        // Take first and last character of the protocol string
+        alpn = firstProtocol.length >= 2
+            ? `${firstProtocol[0]}${firstProtocol[firstProtocol.length - 1]}`
+            : `${firstProtocol[0]}${firstProtocol[0]}`;
     }
 
     // Format numbers as fixed-width hex
@@ -350,10 +357,12 @@ export function calculateJa4FromHelloData(
         .filter(c => !isGREASE(c))
         .map(c => c.toString(16).padStart(4, '0'));
     const sortedCiphers = [...cipherHexValues].sort().join(',');
-    const cipherHash = crypto.createHash('sha256')
-        .update(sortedCiphers)
-        .digest('hex')
-        .slice(0, 12);
+    const cipherHash = ciphers.length
+        ? crypto.createHash('sha256')
+            .update(sortedCiphers)
+            .digest('hex')
+            .slice(0, 12)
+        : '000000000000'; // No ciphers provided
 
     // Part C: Truncated SHA256 of extensions + sig algorithms
     // Get extensions (excluding SNI and ALPN)
