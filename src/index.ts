@@ -319,13 +319,13 @@ export interface Ja4Data {
 export function calculateJa4FromHelloData(
     { serverName, alpnProtocols, fingerprintData }: TlsHelloData
 ): string {
-    const [tlsVersion, ciphers, extensions, groups, curveFormats, sigAlgorithms] = fingerprintData;
+    const [ , ciphers, extensions, , , sigAlgorithms] = fingerprintData;
 
     // Part A: Protocol info
     const protocol = 't'; // We only handle TCP for now
     const version = extensions.includes(43) ? '13' : '12'; // Extension 43 is supported_versions
     const sni = !serverName ? 'i' : 'd'; // 'i' for IP (no SNI), 'd' for domain
-    
+
     // Handle different ALPN protocols
     let alpn = '00';
     if (alpnProtocols && alpnProtocols.length > 0) {
@@ -337,11 +337,11 @@ export function calculateJa4FromHelloData(
                 : '00';
         }
     }
-    
+
     // Format numbers as fixed-width hex
     const cipherCount = ciphers.length.toString().padStart(2, '0');
     const extensionCount = extensions.length.toString().padStart(2, '0');
-    
+
     const ja4_a = `${protocol}${version}${sni}${cipherCount}${extensionCount}${alpn}`;
 
     // Part B: Truncated SHA256 of cipher suites
