@@ -65,7 +65,8 @@ export type TlsFingerprintData = [
     ciphers: number[],
     extensions: number[],
     groups: number[],
-    curveFormats: number[]
+    curveFormats: number[],
+    sigAlgorithms: number[]
 ];
 
 /**
@@ -206,11 +207,21 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
     const extensionsLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
     let readExtensionsDataLength = 0;
     const extensions: Array<{ id: Buffer, data: Buffer }> = [];
+    let signatureAlgorithms: number[] = [];
 
     while (readExtensionsDataLength < extensionsLength) {
         const extensionId = await collectBytes(helloDataStream, 2);
         const extensionLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
         const extensionData = await collectBytes(helloDataStream, extensionLength);
+
+        if (extensionId.readUInt16BE() === 13) {
+            const sigAlgsLength = extensionData.readUInt16BE(0);
+            const sigAlgs: number[] = [];
+            for (let i = 2; i < sigAlgsLength + 2; i += 2) {
+                sigAlgs.push(extensionData.readUInt16BE(i));
+            }
+            signatureAlgorithms = sigAlgs;
+        }
 
         extensions.push({ id: extensionId, data: extensionData });
         readExtensionsDataLength += 4 + extensionLength;
@@ -253,7 +264,8 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
         cipherFingerprint,
         extensionsFingerprint,
         groupsFingerprint,
-        curveFormatsFingerprint
+        curveFormatsFingerprint,
+        signatureAlgorithms
     ] as TlsFingerprintData;
 
     // And capture other client hello data that might be interesting:
@@ -292,9 +304,109 @@ export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
     );
 }
 
+export interface Ja4Data {
+    protocol: 't' | 'q' | 'd'; // TLS, QUIC, DTLS (only TLS supported for now)
+    version: '10' | ' 11' | '12' | '13'; // TLS version
+    sni: 'd' | 'i'; // 'd' if a domain was provided via SNI, 'i' otherwise (for IP)
+    cipherCount: number;
+    extensionCount: number;
+    alpn: string; // First and last character of the ALPN value or '00' if none
+    cipherSuites: number[];
+    extensions: number[];
+    sigAlgorithms: number[];
+}
+
+export function calculateJa4FromHelloData(
+    { serverName, alpnProtocols, fingerprintData }: TlsHelloData
+): string {
+    const [tlsVersion, ciphers, extensions, , , sigAlgorithms] = fingerprintData;
+
+    // Part A: Protocol info
+    const protocol = 't'; // We only handle TCP for now
+
+    const version = extensions.includes(0x002B)
+        ? '13' // TLS 1.3 uses the supported versions extension, and 1.4+ doesn't exist (yet)
+        : { // Previous TLS sets the version in the handshake up front:
+            0x0303: '12',
+            0x0302: '11',
+            0x0301: '10'
+        }[tlsVersion]
+        ?? '00'; // Other unknown version
+
+    const sni = !serverName ? 'i' : 'd'; // 'i' for IP (no SNI), 'd' for domain
+
+    // Handle different ALPN protocols
+    let alpn = '00';
+    const firstProtocol = alpnProtocols?.[0];
+    if (firstProtocol && firstProtocol.length >= 1) {
+        // Take first and last character of the protocol string
+        alpn = firstProtocol.length >= 2
+            ? `${firstProtocol[0]}${firstProtocol[firstProtocol.length - 1]}`
+            : `${firstProtocol[0]}${firstProtocol[0]}`;
+    }
+
+    // Format numbers as fixed-width hex
+    const cipherCount = ciphers.length.toString().padStart(2, '0');
+    const extensionCount = extensions.length.toString().padStart(2, '0');
+
+    const ja4_a = `${protocol}${version}${sni}${cipherCount}${extensionCount}${alpn}`;
+
+    // Part B: Truncated SHA256 of cipher suites
+    // First collect all hex values and sort them
+    const cipherHexValues = ciphers
+        .filter(c => !isGREASE(c))
+        .map(c => c.toString(16).padStart(4, '0'));
+    const sortedCiphers = [...cipherHexValues].sort().join(',');
+    const cipherHash = ciphers.length
+        ? crypto.createHash('sha256')
+            .update(sortedCiphers)
+            .digest('hex')
+            .slice(0, 12)
+        : '000000000000'; // No ciphers provided
+
+    // Part C: Truncated SHA256 of extensions + sig algorithms
+    // Get extensions (excluding SNI and ALPN)
+    const extensionsStr = extensions
+        .filter(e => {
+            if (e === 0x0 || e === 0x10) return false; // Filter SNI and ALPN
+            return !isGREASE(e);
+        })
+        .sort((a, b) => a - b)
+        .map(e => e.toString(16).padStart(4, '0'))
+        .join(',');
+
+    // Get signature algorithms from the actual TLS hello data
+    const signatureAlgorithmsStr = sigAlgorithms
+        ? sigAlgorithms
+            .filter(s => !isGREASE(s))
+            .map(s => s.toString(16).padStart(4, '0'))
+            .join(',')
+        : '';
+
+    // Add separator only if we have signature algorithms
+    const separator = signatureAlgorithmsStr ? '_' : '';
+
+    // Combine and hash
+    const ja4_c_raw = `${extensionsStr}${separator}${signatureAlgorithmsStr}`;
+
+    const extensionHash = crypto.createHash('sha256')
+        .update(ja4_c_raw)
+        .digest('hex')
+        .slice(0, 12);
+
+    return `${ja4_a}_${cipherHash}_${extensionHash}`;
+}
+
+export async function getTlsFingerprintAsJa4(rawStream: stream.Readable) {
+    return calculateJa4FromHelloData(
+        (await readTlsClientHello(rawStream))
+    );
+}
+
 interface SocketWithHello extends net.Socket {
     tlsClientHello?: TlsHelloData & {
         ja3: string;
+        ja4: string;
     }
 }
 
@@ -309,6 +421,7 @@ declare module 'tls' {
          */
         tlsClientHello?: TlsHelloData & {
             ja3: string;
+            ja4: string;
         }
     }
 }
@@ -339,7 +452,8 @@ export function trackClientHellos(tlsServer: tls.Server) {
 
             socket.tlsClientHello = {
                 ...helloData,
-                ja3: calculateJa3FromFingerprintData(helloData.fingerprintData)
+                ja3: calculateJa3FromFingerprintData(helloData.fingerprintData),
+                ja4: calculateJa4FromHelloData(helloData)
             };
         } catch (e) {
             if (!(e instanceof NonTlsError)) { // Ignore totally non-TLS traffic
