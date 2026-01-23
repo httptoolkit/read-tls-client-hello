@@ -24,6 +24,11 @@ import {
 } from '../src/index';
 
 const nodeMajorVersion = parseInt(process.version.slice(1).split('.')[0], 10);
+const nodeMinorVersion = parseInt(process.version.slice(1).split('.')[1], 10);
+
+// Node 22.20+ and Node 24+ include ML-KEM support and renegotiation_info extension
+const hasNewTlsConfig = nodeMajorVersion >= 24 ||
+    (nodeMajorVersion === 22 && nodeMinorVersion >= 20);
 
 interface EchoResponse {
     tls: {
@@ -71,21 +76,39 @@ describe("Read-TLS-Client-Hello", () => {
 
         expect(tlsVersion).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
         expect(ciphers.slice(0, 3)).to.deep.equal([4866, 4867, 4865]);
-        expect(extension).to.deep.equal([
-            11,
-            10,
-            35,
-            22,
-            23,
-            13,
-            43,
-            45,
-            51
-        ]);
-        expect(groups).to.deep.equal([
-            29, 23, 30, 25, 24,
-            ...(nodeMajorVersion >= 17 ? [256, 257, 258, 259, 260] : [])
-        ]);
+        if (hasNewTlsConfig) {
+            // Node 22.20+ / 24+ adds renegotiation_info extension (65281)
+            expect(extension).to.deep.equal([
+                65281,
+                11,
+                10,
+                35,
+                22,
+                23,
+                13,
+                43,
+                45,
+                51
+            ]);
+            // Node 22.20+ / 24+ adds ML-KEM-768 (4588) and has different group order
+            expect(groups).to.deep.equal([4588, 29, 23, 30, 24, 25, 256, 257]);
+        } else {
+            expect(extension).to.deep.equal([
+                11,
+                10,
+                35,
+                22,
+                23,
+                13,
+                43,
+                45,
+                51
+            ]);
+            expect(groups).to.deep.equal([
+                29, 23, 30, 25, 24,
+                ...(nodeMajorVersion >= 17 ? [256, 257, 258, 259, 260] : [])
+            ]);
+        }
         expect(curveFormats).to.deep.equal([0, 1, 2]);
     });
 
@@ -131,7 +154,8 @@ describe("Read-TLS-Client-Hello", () => {
 
         expect(fingerprint).to.be.oneOf([
             '398430069e0a8ecfbc8db0778d658d77', // Node 12 - 16
-            '0cce74b0d9b7f8528fb2181588d23793' // Node 17+
+            '0cce74b0d9b7f8528fb2181588d23793', // Node 17 - 22.18, 23.x
+            '944d1e1858cd278718f8a46b65d3212f' // Node 22.20+, 24+
         ]);
     });
 
@@ -155,7 +179,8 @@ describe("Read-TLS-Client-Hello", () => {
 
         expect(fingerprint).to.be.oneOf([
             't13d591000_a33745022dd6_5ac7197df9d2', // Node 12 - 16
-            't13d591000_a33745022dd6_1f22a2ca17c4' // Node 17+
+            't13d591000_a33745022dd6_1f22a2ca17c4', // Node 17 - 22.18, 23.x
+            't13d521100_b262b3658495_8e6e362c5eac' // Node 22.20+, 24+
         ]);
     });
 
@@ -288,7 +313,8 @@ describe("Read-TLS-Client-Hello", () => {
         const fingerprint = tlsSocket.tlsFingerprint;
         expect(fingerprint).to.be.oneOf([
             '76cd17e0dc73c98badbb6ee3752dcf4c', // Node 12 - 16
-            '6521bd74aad3476cdb3daa827288ec35' // Node 17+
+            '6521bd74aad3476cdb3daa827288ec35', // Node 17 - 22.18, 23.x
+            'e29263fb066facf0f3d23ccaf0fe19da' // Node 22.20+, 24+
         ]);
     });
 
