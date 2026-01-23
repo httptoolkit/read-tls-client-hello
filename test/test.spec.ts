@@ -30,16 +30,9 @@ const nodeMinorVersion = parseInt(process.version.slice(1).split('.')[1], 10);
 const hasNewTlsConfig = nodeMajorVersion >= 24 ||
     (nodeMajorVersion === 22 && nodeMinorVersion >= 20);
 
-interface EchoResponse {
-    tls: {
-        ja3: {
-            hash: string;
-        };
-        ja4: {
-            hash: string;
-            raw: string;
-        };
-    };
+interface FingerprintResponse {
+    ja3: string;
+    ja4: string;
 }
 
 describe("Read-TLS-Client-Hello", () => {
@@ -184,7 +177,7 @@ describe("Read-TLS-Client-Hello", () => {
         ]);
     });
 
-    it("calculates the same fingerprint as echo.ramaproxy.org", async () => {
+    it("calculates the same fingerprint as testserver.host", async function () {
         server = makeDestroyable(new net.Server());
 
         server.listen();
@@ -204,14 +197,14 @@ describe("Read-TLS-Client-Hello", () => {
         const ourJa3 = await getTlsFingerprintAsJa3(incomingSocket);
         const ourJa4 = calculateJa4FromHelloData(helloData);
 
-        const remoteFingerprints = await new Promise<EchoResponse>((resolve, reject) => {
-            const response = https.get('https://echo.ramaproxy.org/');
+        const remoteFingerprints = await new Promise<FingerprintResponse>((resolve, reject) => {
+            const response = https.get('https://testserver.host/tls/fingerprint');
             response.on('response', async (resp) => {
-                if (resp.statusCode !== 200) reject(new Error(`Unexpected ${resp.statusCode} from echo.ramaproxy.org`));
+                if (resp.statusCode !== 200) reject(new Error(`Unexpected ${resp.statusCode} from testserver.host`));
 
                 try {
                     const rawData = await streamToBuffer(resp);
-                    const data = JSON.parse(rawData.toString()) as EchoResponse;
+                    const data = JSON.parse(rawData.toString()) as FingerprintResponse;
                     resolve(data);
                 } catch (e) {
                     reject(e);
@@ -221,8 +214,8 @@ describe("Read-TLS-Client-Hello", () => {
         });
 
         // Check both JA3 and JA4 hashes
-        expect(ourJa3).to.equal(remoteFingerprints.tls.ja3.hash);
-        expect(ourJa4).to.equal(remoteFingerprints.tls.ja4.hash);
+        expect(ourJa3).to.equal(remoteFingerprints.ja3);
+        expect(ourJa4).to.equal(remoteFingerprints.ja4);
     });
 
     it("can capture the server name from a Chrome request", async () => {
