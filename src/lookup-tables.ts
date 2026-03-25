@@ -11,16 +11,23 @@
 //
 // Last updated: 2026-03-25
 
-export const TLS_VERSIONS: Record<number, string> = {
+// Lookup table type: known numeric keys return definite string literals,
+// arbitrary numeric keys return string | undefined.
+type LookupTable<T extends Record<number, string>> = Readonly<T> & { readonly [key: number]: string | undefined };
+function lookupTable<const T extends Record<number, string>>(table: T): LookupTable<T> {
+    return table as LookupTable<T>;
+}
+
+export const TLS_VERSIONS = lookupTable({
     0x0300: 'SSL 3.0',
     0x0301: 'TLS 1.0',
     0x0302: 'TLS 1.1',
     0x0303: 'TLS 1.2',
     0x0304: 'TLS 1.3',
-};
+});
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4
-export const CIPHER_SUITES: Record<number, string> = {
+export const CIPHER_SUITES = lookupTable({
     0x0000: 'TLS_NULL_WITH_NULL_NULL',
     0x0001: 'TLS_RSA_WITH_NULL_MD5',
     0x0002: 'TLS_RSA_WITH_NULL_SHA',
@@ -382,10 +389,10 @@ export const CIPHER_SUITES: Record<number, string> = {
     0xD002: 'TLS_ECDHE_PSK_WITH_AES_256_GCM_SHA384',
     0xD003: 'TLS_ECDHE_PSK_WITH_AES_128_CCM_8_SHA256',
     0xD005: 'TLS_ECDHE_PSK_WITH_AES_128_CCM_SHA256',
-};
+});
 
 // https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
-export const EXTENSIONS: Record<number, string> = {
+export const EXTENSIONS = lookupTable({
     0: 'server_name',
     1: 'max_fragment_length',
     2: 'client_certificate_url',
@@ -452,10 +459,10 @@ export const EXTENSIONS: Record<number, string> = {
     65281: 'renegotiation_info',
     // Non-IANA but widely deployed
     17513: 'application_settings',
-};
+});
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-8
-export const SUPPORTED_GROUPS: Record<number, string> = {
+export const SUPPORTED_GROUPS = lookupTable({
     1: 'sect163k1',
     2: 'sect163r1',
     3: 'sect163r2',
@@ -516,11 +523,11 @@ export const SUPPORTED_GROUPS: Record<number, string> = {
     // Legacy explicit curves
     65281: 'arbitrary_explicit_prime_curves',
     65282: 'arbitrary_explicit_char2_curves',
-};
+});
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-signaturescheme
 // Also includes legacy TLS 1.2 (hash, signature) byte-pair values from RFC 5246 section 7.4.1.4.1
-export const SIGNATURE_ALGORITHMS: Record<number, string> = {
+export const SIGNATURE_ALGORITHMS = lookupTable({
     // Legacy TLS 1.2 byte-pair schemes (hash << 8 | sig): hash 2=SHA-1, 3=SHA-224, 4=SHA-256,
     // 5=SHA-384, 6=SHA-512; sig 1=RSA, 2=DSA, 3=ECDSA
     0x0201: 'rsa_pkcs1_sha1',
@@ -581,36 +588,36 @@ export const SIGNATURE_ALGORITHMS: Record<number, string> = {
     0x091A: 'slhdsa_shake_192f',
     0x091B: 'slhdsa_shake_256s',
     0x091C: 'slhdsa_shake_256f',
-};
+});
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-9
-export const EC_POINT_FORMATS: Record<number, string> = {
+export const EC_POINT_FORMATS = lookupTable({
     0: 'uncompressed',
     1: 'ansiX962_compressed_prime',
     2: 'ansiX962_compressed_char2',
-};
+});
 
 // https://www.iana.org/assignments/comp-meth-ids/comp-meth-ids.xhtml
-export const COMPRESSION_METHODS: Record<number, string> = {
+export const COMPRESSION_METHODS = lookupTable({
     0: 'null',
     1: 'DEFLATE',
-};
+});
 
 // RFC 8446 section 4.2.9
-export const PSK_KEY_EXCHANGE_MODES: Record<number, string> = {
+export const PSK_KEY_EXCHANGE_MODES = lookupTable({
     0: 'psk_ke',
     1: 'psk_dhe_ke',
-};
+});
 
 // https://www.iana.org/assignments/tls-certificate-compression/tls-certificate-compression.xhtml
-export const CERTIFICATE_COMPRESSION_ALGORITHMS: Record<number, string> = {
+export const CERTIFICATE_COMPRESSION_ALGORITHMS = lookupTable({
     1: 'zlib',
     2: 'brotli',
     3: 'zstd',
-};
+});
 
 // RFC 6066 / RFC 6961
-export const CERTIFICATE_STATUS_TYPES: Record<number, string> = {
+export const CERTIFICATE_STATUS_TYPES = lookupTable({
     1: 'ocsp',
     2: 'ocsp_multi',
-};
+});
