@@ -4,6 +4,8 @@ import * as tls from 'tls';
 import * as net from 'net';
 
 import { extensionParsers } from './extension-parsers';
+import { EXTENSION_IDS } from './lookup-tables';
+import type { ExtensionName } from './lookup-tables';
 
 export { extensionParsers } from './extension-parsers';
 export * from './lookup-tables';
@@ -71,8 +73,11 @@ export type TlsClientHelloMessage = {
     extensions: TlsExtension[];
 };
 
-export function getExtensionData(extensions: TlsExtension[], id: number) {
-    return extensions.find(e => e.id === id)?.data ?? null;
+export function getExtensionData(extensions: TlsExtension[], id: number | ExtensionName) {
+    const numId = typeof id === 'string'
+        ? EXTENSION_IDS[id]
+        : id;
+    return extensions.find(e => e.id === numId)?.data ?? null;
 }
 
 /**

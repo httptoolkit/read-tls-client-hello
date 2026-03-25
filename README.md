@@ -58,7 +58,7 @@ GREASE values are preserved (they're what the client actually sent). The `calcul
 
 Extensions with registered parsers return structured data. Flag extensions (like `extended_master_secret` or `signed_certificate_timestamp`) return `{}`. Unrecognized, unparseable or GREASE extensions return `null`. If an extension parser encounters malformed data, it falls back to `null` rather than failing the entire parse.
 
-Parsed extensions include: `server_name`, `max_fragment_length`, `status_request`, `supported_groups`, `ec_point_formats`, `signature_algorithms`, `heartbeat`, `application_layer_protocol_negotiation`, `status_request_v2`, `signed_certificate_timestamp`, `padding`, `encrypt_then_mac`, `extended_master_secret`, `compress_certificate`, `record_size_limit`, `session_ticket`, `pre_shared_key`, `early_data`, `supported_versions`, `cookie`, `psk_key_exchange_modes`, `post_handshake_auth`, `signature_algorithms_cert`, `key_share`, `application_settings` (ALPS), `encrypted_client_hello` (ECH), and `renegotiation_info`.
+Parsed extensions include: `server_name` (SNI), `max_fragment_length`, `status_request`, `supported_groups`, `ec_point_formats`, `signature_algorithms`, `heartbeat`, `application_layer_protocol_negotiation` (ALPN), `status_request_v2`, `signed_certificate_timestamp`, `padding`, `encrypt_then_mac`, `extended_master_secret`, `compress_certificate`, `record_size_limit`, `session_ticket`, `pre_shared_key`, `early_data`, `supported_versions`, `cookie`, `psk_key_exchange_modes`, `post_handshake_auth`, `signature_algorithms_cert`, `key_share`, `application_settings` (ALPS), `encrypted_client_hello` (ECH), and `renegotiation_info`.
 
 ### TLS fingerprinting
 
@@ -69,9 +69,35 @@ To calculate TLS fingerprints, there are a few options exported from this module
 * `calculateJa3(clientHello)` - Takes a parsed `TlsClientHelloMessage` and returns the corresponding JA3 hash.
 * `calculateJa4(clientHello)` - Takes a parsed `TlsClientHelloMessage` and returns the corresponding JA4 hash.
 
+### Accessing extension data
+
+Use `getExtensionData(extensions, id)` to look up a specific extension's parsed data by numeric ID, name, or alias. Returns the data object, or `null` if the extension is not present.
+
+Names should be the officially registered name from https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml. Convenient aliases are provided for common cases, including `sni`, `alpn`, `alps` and `ech`. The API is typed so with TypeScript only valid names are allowed (although any raw numeric id can be used). PRs to add more aliases are welcome.
+
+```javascript
+const { readTlsClientHello, getExtensionData, EXTENSION_IDS } = require('read-tls-client-hello');
+
+const clientHello = await readTlsClientHello(socket);
+
+// Get the server name (SNI)
+const sniData = getExtensionData(clientHello.extensions, 'sni'); // or 'server_name', or 0x0
+const serverName = sniData?.serverName;
+
+// Get ALPN protocols
+const alpnData = getExtensionData(clientHello.extensions, 'alpn');
+const protocols = alpnData?.protocols;
+
+// Get supported TLS versions
+const svData = getExtensionData(clientHello.extensions, 'supported_versions');
+const versions = svData?.versions; // e.g. [0x0304, 0x0303]
+```
+
 ### Lookup tables
 
-All hello details (extensions, ciphers, etc) are exposed in `clientHello` with only numeric ids. To get human-readable names, lookup tables are provided:
+All hello details (extensions, ciphers, etc) are exposed with numeric IDs. Lookup tables map these to human-readable names. All tables are fully typed with `as const`, so known keys return literal values, which other keys' values may be undefined.
+
+Forward tables (ID → name) for display:
 
 * `TLS_VERSIONS` - e.g. `0x0303` → `'TLS 1.2'`
 * `CIPHER_SUITES` - e.g. `0x1301` → `'TLS_AES_128_GCM_SHA256'`
@@ -84,8 +110,12 @@ All hello details (extensions, ciphers, etc) are exposed in `clientHello` with o
 * `CERTIFICATE_COMPRESSION_ALGORITHMS` - e.g. `2` → `'brotli'`
 * `CERTIFICATE_STATUS_TYPES` - e.g. `1` → `'ocsp'`
 
+A reverse table (name → ID) is also available for extensions:
+
+* `EXTENSION_IDS` - e.g. `EXTENSION_IDS.key_share` → `51`, with aliases: `sni` (0), `alpn` (16), `alps` (17513), `ech` (65037)
+
 ```javascript
-const { CIPHER_SUITES, EXTENSIONS, isGREASE } = require('read-tls-client-hello');
+const { CIPHER_SUITES, isGREASE } = require('read-tls-client-hello');
 
 const cipherNames = clientHello.cipherSuites
     .filter(id => !isGREASE(id))

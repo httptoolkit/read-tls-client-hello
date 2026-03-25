@@ -392,7 +392,8 @@ export const CIPHER_SUITES = lookupTable({
 });
 
 // https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
-export const EXTENSIONS = lookupTable({
+// Internal const object — the single source of truth for both EXTENSIONS and EXTENSION_IDS.
+const _extensions = {
     0: 'server_name',
     1: 'max_fragment_length',
     2: 'client_certificate_url',
@@ -459,7 +460,31 @@ export const EXTENSIONS = lookupTable({
     65281: 'renegotiation_info',
     // Non-IANA but widely deployed
     17513: 'application_settings',
-});
+} as const satisfies Record<number, string>;
+
+export const EXTENSIONS: LookupTable<typeof _extensions> = _extensions as LookupTable<typeof _extensions>;
+
+// Reverse mapping: extension name (or alias) → numeric ID, derived from _extensions.
+type ExtKey = keyof typeof _extensions;
+type ExtVal = (typeof _extensions)[ExtKey];
+type ReverseExtensions = { readonly [V in ExtVal]: { [K in ExtKey]: (typeof _extensions)[K] extends V ? K : never }[ExtKey] };
+
+const _extensionAliases = {
+    sni: 0,
+    alpn: 16,
+    alps: 17513,
+    ech: 65037,
+} as const satisfies Record<string, number>;
+
+export const EXTENSION_IDS: ReverseExtensions & typeof _extensionAliases & Record<string, number | undefined> =
+    Object.assign(
+        Object.fromEntries(
+            Object.entries(_extensions).map(([id, name]) => [name, Number(id)])
+        ),
+        _extensionAliases
+    ) as any;
+
+export type ExtensionName = keyof (ReverseExtensions & typeof _extensionAliases);
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-8
 export const SUPPORTED_GROUPS = lookupTable({

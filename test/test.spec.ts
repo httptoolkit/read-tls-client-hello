@@ -799,51 +799,30 @@ describe("Lookup tables", () => {
 
 describe("getExtensionData", () => {
 
-    it("retrieves SNI from a Chrome ClientHello", async () => {
+    it("retrieves extensions by alias", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
         const clientHello = await readTlsClientHello(incomingData);
 
-        const sni = getExtensionData(clientHello.extensions, 0x0000) as { serverName: string };
+        const sni = getExtensionData(clientHello.extensions, 'sni') as { serverName: string };
         expect(sni.serverName).to.equal('localhost');
+
+        const alpn = getExtensionData(clientHello.extensions, 'alpn') as { protocols: string[] };
+        expect(alpn.protocols).to.deep.equal(['h2', 'http/1.1']);
     });
 
-    it("retrieves ALPN from a Chrome ClientHello", async () => {
+    it("retrieves extensions by IDs", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
         const clientHello = await readTlsClientHello(incomingData);
 
-        const alpn = getExtensionData(clientHello.extensions, 0x0010) as { protocols: string[] };
-        expect(alpn.protocols).to.deep.equal(['h2', 'http/1.1']);
+        const sni = getExtensionData(clientHello.extensions, 0x0) as { serverName: string };
+        expect(sni.serverName).to.equal('localhost');
     });
 
     it("returns null for absent extensions", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
         const clientHello = await readTlsClientHello(incomingData);
-
-        // heartbeat is not present in the Chrome fixture
-        expect(getExtensionData(clientHello.extensions, 0x000F)).to.equal(null);
+        expect(getExtensionData(clientHello.extensions, 'heartbeat')).to.equal(null);
+        expect(getExtensionData(clientHello.extensions, 98765)).to.equal(null);
     });
 
-    let server: net.Server & { destroy?: () => Promise<void> };
-    afterEach(() => server?.destroy?.().catch(() => {}));
-
-    it("returns null for SNI/ALPN when not present", async () => {
-        const netServer = makeDestroyable(new net.Server());
-        server = netServer;
-
-        netServer.listen();
-        await new Promise((resolve) => netServer.on('listening', resolve));
-
-        let incomingSocketPromise = getDeferred<net.Socket>();
-        netServer.on('connection', (socket) => incomingSocketPromise.resolve(socket));
-
-        const port = (netServer.address() as net.AddressInfo).port;
-        tls.connect({ host: 'localhost', port }).on('error', () => {});
-
-        const incomingSocket = await incomingSocketPromise;
-        const clientHello = await readTlsClientHello(incomingSocket);
-
-        // Pure TLS connection without SNI or ALPN
-        expect(getExtensionData(clientHello.extensions, 0x0000)).to.equal(null);
-        expect(getExtensionData(clientHello.extensions, 0x0010)).to.equal(null);
-    });
 });
