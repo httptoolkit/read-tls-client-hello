@@ -73,21 +73,9 @@ export type TlsClientHelloMessage = {
     extensions: TlsExtension[];
 };
 
-export type TlsHelloData = {
-    serverName: string | undefined;
-    alpnProtocols: string[] | undefined;
-    fingerprintData: TlsFingerprintData;
-    clientHello: TlsClientHelloMessage;
-};
-
-export type TlsFingerprintData = [
-    tlsVersion: number,
-    ciphers: number[],
-    extensions: number[],
-    groups: number[],
-    curveFormats: number[],
-    sigAlgorithms: number[]
-];
+export function getExtensionData(extensions: TlsExtension[], id: number) {
+    return extensions.find(e => e.id === id)?.data ?? null;
+}
 
 /**
  * Seperate error class. If you want to detect TLS parsing errors, but ignore TLS fingerprint
@@ -134,53 +122,7 @@ async function extractTlsHello(inputStream: stream.Readable): Promise<Buffer> {
     }
 }
 
-function parseSniData(data: Buffer) {
-    // SNI is almost always just one value - and is arguably required to be, since there's only one type
-    // in the RFC and you're only allowed one name per type, but it's still structured as a list:
-    let offset = 0;
-    while (offset < data.byteLength) {
-        const entryLength = data.readUInt16BE(offset);
-        offset += 2;
-        const entryType = data[offset];
-        offset += 1;
-        const nameLength = data.readUInt16BE(offset);
-        offset += 2;
-
-        if (nameLength !== entryLength - 3) {
-            throw new Error('Invalid length in SNI entry');
-        }
-
-        const name = data.slice(offset, offset + nameLength).toString('ascii');
-        offset += nameLength;
-
-        if (entryType === 0x0) return name;
-    }
-
-    // No data, or no names with DNS hostname type.
-    return undefined;
-}
-
-function parseAlpnData(data: Buffer) {
-    const protocols: string[] = [];
-
-    const listLength = data.readUInt16BE();
-    if (listLength !== data.byteLength - 2) {
-        throw new Error('Invalid length for ALPN list');
-    }
-
-    let offset = 2;
-    while (offset < data.byteLength) {
-        const nameLength = data[offset];
-        offset += 1;
-        const name = data.slice(offset, offset + nameLength).toString('ascii');
-        offset += nameLength;
-        protocols.push(name);
-    }
-
-    return protocols;
-}
-
-export async function readTlsClientHello(inputStream: stream.Readable): Promise<TlsHelloData> {
+export async function readTlsClientHello(inputStream: stream.Readable): Promise<TlsClientHelloMessage> {
     const wasFlowing = inputStream.readableFlowing;
     if (wasFlowing) inputStream.pause(); // Pause other readers, so we have time to precisely get the data we need.
 
@@ -233,29 +175,16 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
 
     const extensionsLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
     let readExtensionsDataLength = 0;
-    const extensions: Array<{ id: Buffer, data: Buffer }> = [];
-    let signatureAlgorithms: number[] = [];
     const parsedExtensions: TlsExtension[] = [];
 
     while (readExtensionsDataLength < extensionsLength) {
-        const extensionId = await collectBytes(helloDataStream, 2);
+        const extensionId = (await collectBytes(helloDataStream, 2)).readUInt16BE();
         const extensionLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
         const extensionData = await collectBytes(helloDataStream, extensionLength);
 
-        const extIdNum = extensionId.readUInt16BE();
-
-        if (extIdNum === 13) {
-            const sigAlgsLength = extensionData.readUInt16BE(0);
-            const sigAlgs: number[] = [];
-            for (let i = 2; i < sigAlgsLength + 2; i += 2) {
-                sigAlgs.push(extensionData.readUInt16BE(i));
-            }
-            signatureAlgorithms = sigAlgs;
-        }
-
         let parsedData: Record<string, unknown> | null = null;
-        const parser = extensionParsers[extIdNum];
-        if (parser && !isGREASE(extIdNum)) {
+        const parser = extensionParsers[extensionId];
+        if (parser && !isGREASE(extensionId)) {
             try {
                 parsedData = parser(extensionData);
             } catch {
@@ -263,118 +192,66 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
             }
         }
 
-        parsedExtensions.push({ id: extIdNum, data: parsedData });
-        extensions.push({ id: extensionId, data: extensionData });
+        parsedExtensions.push({ id: extensionId, data: parsedData });
         readExtensionsDataLength += 4 + extensionLength;
     }
 
-    // All data received & parsed! Now turn it into the fingerprint format:
-    //SSLVersion,Cipher,SSLExtension,EllipticCurve,EllipticCurvePointFormat
-
-    const tlsVersionFingerprint = clientTlsVersion.readUint16BE()
-
-    const cipherFingerprint: number[] = allCipherSuiteIds.filter(id => !isGREASE(id));
-
-    const extensionsFingerprint: number[] = extensions
-        .map(({ id }) => getUint16BE(id, 0))
-        .filter(id => !isGREASE(id));
-
-    const supportedGroupsData = (
-        extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x0a])))?.data
-        ?? Buffer.from([])
-    ).slice(2) // Drop the length prefix
-
-    const groupsFingerprint: number[] = [];
-    for (let i = 0; i < supportedGroupsData.length; i += 2) {
-        const groupId = getUint16BE(supportedGroupsData, i)
-        if (isGREASE(groupId)) continue;
-        groupsFingerprint.push(groupId);
-    }
-
-    const curveFormatsData = extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x0b])))?.data
-        ?? Buffer.from([]);
-    const curveFormatsFingerprint: number[] = Array.from(curveFormatsData.slice(1)); // Drop length prefix
-
-    const fingerprintData = [
-        tlsVersionFingerprint,
-        cipherFingerprint,
-        extensionsFingerprint,
-        groupsFingerprint,
-        curveFormatsFingerprint,
-        signatureAlgorithms
-    ] as TlsFingerprintData;
-
-    // And capture other client hello data that might be interesting:
-    const sniExtensionData = extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x0])))?.data;
-    const serverName = sniExtensionData
-        ? parseSniData(sniExtensionData)
-        : undefined;
-
-    const alpnExtensionData = extensions.find(({ id }) => id.equals(Buffer.from([0x0, 0x10])))?.data;
-    const alpnProtocols = alpnExtensionData
-        ? parseAlpnData(alpnExtensionData)
-        : undefined;
-
     return {
-        serverName,
-        alpnProtocols,
-        fingerprintData,
-        clientHello: {
-            version: tlsVersionFingerprint,
-            random: clientRandom,
-            sessionId,
-            cipherSuites: allCipherSuiteIds,
-            compressionMethods: allCompressionMethods,
-            extensions: parsedExtensions
-        }
+        version: clientTlsVersion.readUint16BE(),
+        random: clientRandom,
+        sessionId,
+        cipherSuites: allCipherSuiteIds,
+        compressionMethods: allCompressionMethods,
+        extensions: parsedExtensions
     };
 }
 
-export function calculateJa3FromFingerprintData(fingerprintData: TlsFingerprintData) {
+export function calculateJa3(clientHello: TlsClientHelloMessage) {
+    const ciphers = clientHello.cipherSuites.filter(id => !isGREASE(id));
+    const extensionIds = clientHello.extensions.map(e => e.id).filter(id => !isGREASE(id));
+
+    const groups = (getExtensionData(clientHello.extensions, 0x000A) as { groups: number[] } | null)
+        ?.groups.filter(id => !isGREASE(id)) ?? [];
+
+    const curveFormats = (getExtensionData(clientHello.extensions, 0x000B) as { formats: number[] } | null)
+        ?.formats ?? [];
+
     const fingerprintString = [
-        fingerprintData[0],
-        fingerprintData[1].join('-'),
-        fingerprintData[2].join('-'),
-        fingerprintData[3].join('-'),
-        fingerprintData[4].join('-')
+        clientHello.version,
+        ciphers.join('-'),
+        extensionIds.join('-'),
+        groups.join('-'),
+        curveFormats.join('-')
     ].join(',');
 
     return crypto.createHash('md5').update(fingerprintString).digest('hex');
 }
 
 export async function getTlsFingerprintAsJa3(rawStream: stream.Readable) {
-    return calculateJa3FromFingerprintData(
-        (await readTlsClientHello(rawStream)).fingerprintData
-    );
+    return calculateJa3(await readTlsClientHello(rawStream));
 }
 
-export interface Ja4Data {
-    protocol: 't' | 'q' | 'd'; // TLS, QUIC, DTLS (only TLS supported for now)
-    version: '10' | ' 11' | '12' | '13'; // TLS version
-    sni: 'd' | 'i'; // 'd' if a domain was provided via SNI, 'i' otherwise (for IP)
-    cipherCount: number;
-    extensionCount: number;
-    alpn: string; // First and last character of the ALPN value or '00' if none
-    cipherSuites: number[];
-    extensions: number[];
-    sigAlgorithms: number[];
-}
+export function calculateJa4(clientHello: TlsClientHelloMessage): string {
+    const ciphers = clientHello.cipherSuites.filter(id => !isGREASE(id));
+    const extensionIds = clientHello.extensions.map(e => e.id).filter(id => !isGREASE(id));
 
-export function calculateJa4FromHelloData(
-    { serverName, alpnProtocols, fingerprintData }: TlsHelloData
-): string {
-    const [tlsVersion, ciphers, extensions, , , sigAlgorithms] = fingerprintData;
+    const serverName = (getExtensionData(clientHello.extensions, 0x0000) as { serverName: string } | null)
+        ?.serverName;
+    const alpnProtocols = (getExtensionData(clientHello.extensions, 0x0010) as { protocols: string[] } | null)
+        ?.protocols;
+    const sigAlgorithms = (getExtensionData(clientHello.extensions, 0x000D) as { algorithms: number[] } | null)
+        ?.algorithms ?? [];
 
     // Part A: Protocol info
     const protocol = 't'; // We only handle TCP for now
 
-    const version = extensions.includes(0x002B)
+    const version = extensionIds.includes(0x002B)
         ? '13' // TLS 1.3 uses the supported versions extension, and 1.4+ doesn't exist (yet)
         : { // Previous TLS sets the version in the handshake up front:
             0x0303: '12',
             0x0302: '11',
             0x0301: '10'
-        }[tlsVersion]
+        }[clientHello.version]
         ?? '00'; // Other unknown version
 
     const sni = !serverName ? 'i' : 'd'; // 'i' for IP (no SNI), 'd' for domain
@@ -391,14 +268,12 @@ export function calculateJa4FromHelloData(
 
     // Format numbers as fixed-width hex
     const cipherCount = ciphers.length.toString().padStart(2, '0');
-    const extensionCount = extensions.length.toString().padStart(2, '0');
+    const extensionCount = extensionIds.length.toString().padStart(2, '0');
 
     const ja4_a = `${protocol}${version}${sni}${cipherCount}${extensionCount}${alpn}`;
 
     // Part B: Truncated SHA256 of cipher suites
-    // First collect all hex values and sort them
     const cipherHexValues = ciphers
-        .filter(c => !isGREASE(c))
         .map(c => c.toString(16).padStart(4, '0'));
     const sortedCiphers = [...cipherHexValues].sort().join(',');
     const cipherHash = ciphers.length
@@ -410,22 +285,16 @@ export function calculateJa4FromHelloData(
 
     // Part C: Truncated SHA256 of extensions + sig algorithms
     // Get extensions (excluding SNI and ALPN)
-    const extensionsStr = extensions
-        .filter(e => {
-            if (e === 0x0 || e === 0x10) return false; // Filter SNI and ALPN
-            return !isGREASE(e);
-        })
+    const extensionsStr = extensionIds
+        .filter(e => e !== 0x0 && e !== 0x10)
         .sort((a, b) => a - b)
         .map(e => e.toString(16).padStart(4, '0'))
         .join(',');
 
-    // Get signature algorithms from the actual TLS hello data
     const signatureAlgorithmsStr = sigAlgorithms
-        ? sigAlgorithms
-            .filter(s => !isGREASE(s))
-            .map(s => s.toString(16).padStart(4, '0'))
-            .join(',')
-        : '';
+        .filter(s => !isGREASE(s))
+        .map(s => s.toString(16).padStart(4, '0'))
+        .join(',');
 
     // Add separator only if we have signature algorithms
     const separator = signatureAlgorithmsStr ? '_' : '';
@@ -442,13 +311,11 @@ export function calculateJa4FromHelloData(
 }
 
 export async function getTlsFingerprintAsJa4(rawStream: stream.Readable) {
-    return calculateJa4FromHelloData(
-        (await readTlsClientHello(rawStream))
-    );
+    return calculateJa4(await readTlsClientHello(rawStream));
 }
 
 interface SocketWithHello extends net.Socket {
-    tlsClientHello?: TlsHelloData & {
+    tlsClientHello?: TlsClientHelloMessage & {
         ja3: string;
         ja4: string;
     }
@@ -463,7 +330,7 @@ declare module 'tls' {
          * This is only set if the socket came from a TLS server where fingerprinting
          * has been enabled with `trackClientHellos`.
          */
-        tlsClientHello?: TlsHelloData & {
+        tlsClientHello?: TlsClientHelloMessage & {
             ja3: string;
             ja4: string;
         }
@@ -492,12 +359,12 @@ export function trackClientHellos(tlsServer: tls.Server) {
     // Listen ourselves for connections, get the fingerprint first, then let TLS setup resume:
     tlsServer.on('connection', async (socket: SocketWithHello) => {
         try {
-            const helloData = await readTlsClientHello(socket);
+            const clientHello = await readTlsClientHello(socket);
 
             socket.tlsClientHello = {
-                ...helloData,
-                ja3: calculateJa3FromFingerprintData(helloData.fingerprintData),
-                ja4: calculateJa4FromHelloData(helloData)
+                ...clientHello,
+                ja3: calculateJa3(clientHello),
+                ja4: calculateJa4(clientHello)
             };
         } catch (e) {
             if (!(e instanceof NonTlsError)) { // Ignore totally non-TLS traffic

@@ -30,7 +30,7 @@ server.on('request', (request, response) => {
 });
 ```
 
-A `tlsClientHello` property will be attached to all sockets, containing the parsed data returned by `readTlsClientHello` (see below), a `ja3` property with the JA3 TLS fingerprint for the client hello, e.g. `cd08e31494f9531f560d64c695473da9` and a `ja4` property with the JA4 TLS fingerprint for the client hello, e.g. `t13d591000_a33745022dd6_1f22a2ca17c4`.
+A `tlsClientHello` property will be attached to all sockets, containing the parsed ClientHello returned by `readTlsClientHello` (see below), plus `ja3` and `ja4` properties with the TLS fingerprint hashes.
 
 ### Reading a TLS client hello
 
@@ -40,33 +40,7 @@ This method reads the initial data from the socket, parses it, and then unshifts
 
 If parsing fails, this method will throw an error, but will still ensure all data is returned to the socket first, so that non-TLS streams can also be processed as normal.
 
-The returned promise resolves to an object, containing:
-
-* `serverName` - The server name requested in the client hello (or undefined if SNI was not used)
-* `alpnProtocols` - An array of ALPN protocol names requested in the client hello (or undefined if ALPN was not used)
-* `fingerprintData` - An array containing the raw components used for JA3 TLS fingerprinting:
-    1. The TLS version number as a Uint16 (771 for TLS 1.2+)
-    2. An array of cipher ids (excluding GREASE)
-    3. An array of extension ids (excluding GREASE)
-    4. An array of supported group ids (excluding GREASE)
-    5. An array of supported elliptic curve ids
-    6. An array of signature algorithms (TLS 1.3)
-* `clientHello` - The full parsed ClientHello message (see [ClientHello format](#clienthello-format) below)
-
-### TLS fingerprinting
-
-To calculate TLS fingerprints, there are a few options exported from this module:
-
-* `getTlsFingerprintAsJa3` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA3 hash string, e.g. `cd08e31494f9531f560d64c695473da9`, instead of the raw hello components.
-* `getTlsFingerprintAsJa4` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA4 hash string, e.g. `t13d591000_a33745022dd6_1f22a2ca17c4`, instead of the raw hello components.
-* `readTlsClientHello(stream)` - Reads the entire hello (see above). In the returned object, you can read the raw data components used for JA3 fingerprinting from the `fingerprintData` property.
-* `calculateJa3FromFingerprintData(fingerprintData)` - Takes raw TLS fingerprint data, and returns the corresponding JA3 hash.
-* `calculateJa4FromHelloData(helloData)` - Takes the full hello data, including the serverName, alpnProtocols & fingerprinting parameters returned by `readTlsClientHello`, and returns the corresponding JA4 hash, eg. `t13d591000_a33745022dd6_1f22a2ca17c4`.
-
-
-### ClientHello format
-
-The `clientHello` field contains the complete parsed ClientHello message:
+The returned promise resolves to a `TlsClientHelloMessage` object containing:
 
 * `version` - The legacy version field (e.g. `0x0303` for TLS 1.2/1.3)
 * `random` - 32-byte client random as a Buffer
@@ -80,11 +54,20 @@ Each extension in the array has:
 * `id` - The numeric extension ID
 * `data` - Parsed extension data as an object, or `null` for unknown/unparseable/GREASE extensions
 
-GREASE values are preserved in `clientHello` (they're what the client actually sent), while they're filtered from `fingerprintData` (as required for JA3/JA4). Use the exported `isGREASE(value)` helper to identify GREASE values.
+GREASE values are preserved (they're what the client actually sent). The `calculateJa3` and `calculateJa4` functions filter GREASE internally. Use the exported `isGREASE(value)` helper to identify GREASE values yourself.
 
-Extensions with registered parsers return structured data. Flag extensions (like `extended_master_secret` or `signed_certificate_timestamp`) return `{}`. Unrecognized, unparseable or GREASE extensions return `null`.
+Extensions with registered parsers return structured data. Flag extensions (like `extended_master_secret` or `signed_certificate_timestamp`) return `{}`. Unrecognized, unparseable or GREASE extensions return `null`. If an extension parser encounters malformed data, it falls back to `null` rather than failing the entire parse.
 
 Parsed extensions include: `server_name`, `max_fragment_length`, `status_request`, `supported_groups`, `ec_point_formats`, `signature_algorithms`, `heartbeat`, `application_layer_protocol_negotiation`, `status_request_v2`, `signed_certificate_timestamp`, `padding`, `encrypt_then_mac`, `extended_master_secret`, `compress_certificate`, `record_size_limit`, `session_ticket`, `pre_shared_key`, `early_data`, `supported_versions`, `cookie`, `psk_key_exchange_modes`, `post_handshake_auth`, `signature_algorithms_cert`, `key_share`, `application_settings` (ALPS), `encrypted_client_hello` (ECH), and `renegotiation_info`.
+
+### TLS fingerprinting
+
+To calculate TLS fingerprints, there are a few options exported from this module:
+
+* `getTlsFingerprintAsJa3(stream)` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA3 hash string, e.g. `cd08e31494f9531f560d64c695473da9`.
+* `getTlsFingerprintAsJa4(stream)` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA4 hash string, e.g. `t13d591000_a33745022dd6_1f22a2ca17c4`.
+* `calculateJa3(clientHello)` - Takes a parsed `TlsClientHelloMessage` and returns the corresponding JA3 hash.
+* `calculateJa4(clientHello)` - Takes a parsed `TlsClientHelloMessage` and returns the corresponding JA4 hash.
 
 ### Lookup tables
 

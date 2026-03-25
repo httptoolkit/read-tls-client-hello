@@ -16,11 +16,12 @@ import {
 
 import {
     readTlsClientHello,
+    getExtensionData,
     getTlsFingerprintAsJa3,
     getTlsFingerprintAsJa4,
-    calculateJa3FromFingerprintData,
+    calculateJa3,
+    calculateJa4,
     trackClientHellos,
-    calculateJa4FromHelloData,
     isGREASE,
     extensionParsers,
     CIPHER_SUITES,
@@ -75,21 +76,20 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const { fingerprintData } = await readTlsClientHello(incomingSocket);
+        const clientHello = await readTlsClientHello(incomingSocket);
 
-        const [
-            tlsVersion,
-            ciphers,
-            extension,
-            groups,
-            curveFormats
-        ] = fingerprintData;
+        const ciphers = clientHello.cipherSuites.filter(c => !isGREASE(c));
+        const extensionIds = clientHello.extensions.map(e => e.id).filter(id => !isGREASE(id));
+        const groups = (clientHello.extensions.find(e => e.id === 0x000A)?.data as any)
+            ?.groups.filter((g: number) => !isGREASE(g)) ?? [];
+        const curveFormats = (clientHello.extensions.find(e => e.id === 0x000B)?.data as any)
+            ?.formats ?? [];
 
-        expect(tlsVersion).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
+        expect(clientHello.version).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
         expect(ciphers.slice(0, 3)).to.deep.equal([4866, 4867, 4865]);
         if (hasNewTlsConfig) {
             // Node 22.20+ / 24+ adds renegotiation_info extension (65281)
-            expect(extension).to.deep.equal([
+            expect(extensionIds).to.deep.equal([
                 65281,
                 11,
                 10,
@@ -104,7 +104,7 @@ describe("Read-TLS-Client-Hello", () => {
             // Node 22.20+ / 24+ adds ML-KEM-768 (4588) and has different group order
             expect(groups).to.deep.equal([4588, 29, 23, 30, 24, 25, 256, 257]);
         } else {
-            expect(extension).to.deep.equal([
+            expect(extensionIds).to.deep.equal([
                 11,
                 10,
                 35,
@@ -139,10 +139,13 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const { serverName, alpnProtocols } = await readTlsClientHello(incomingSocket);
+        const clientHello = await readTlsClientHello(incomingSocket);
 
-        expect(serverName).to.equal(undefined); // No SNI set for pure TLS like this
-        expect(alpnProtocols).to.equal(undefined); // No SNI set for pure TLS like this
+        // No SNI or ALPN set for pure TLS like this
+        const sniExt = clientHello.extensions.find(e => e.id === 0x0000);
+        expect(sniExt).to.equal(undefined);
+        const alpnExt = clientHello.extensions.find(e => e.id === 0x0010);
+        expect(alpnExt).to.equal(undefined);
     });
 
     it("can read Node's JA3 fingerprint", async () => {
@@ -211,9 +214,9 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const helloData = await readTlsClientHello(incomingSocket);
+        const clientHello = await readTlsClientHello(incomingSocket);
         const ourJa3 = await getTlsFingerprintAsJa3(incomingSocket);
-        const ourJa4 = calculateJa4FromHelloData(helloData);
+        const ourJa4 = calculateJa4(clientHello);
 
         const remoteFingerprints = await new Promise<FingerprintResponse>((resolve, reject) => {
             const response = https.get('https://testserver.host/tls/fingerprint');
@@ -239,15 +242,17 @@ describe("Read-TLS-Client-Hello", () => {
     it("can capture the server name from a Chrome request", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
 
-        const { serverName } = await readTlsClientHello(incomingData);
-        expect(serverName).to.equal('localhost');
+        const clientHello = await readTlsClientHello(incomingData);
+        const sniData = clientHello.extensions.find(e => e.id === 0x0000)?.data as any;
+        expect(sniData.serverName).to.equal('localhost');
     });
 
     it("can capture ALPN protocols from a Chrome request", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
 
-        const { alpnProtocols } = await readTlsClientHello(incomingData);
-        expect(alpnProtocols).to.deep.equal([
+        const clientHello = await readTlsClientHello(incomingData);
+        const alpnData = clientHello.extensions.find(e => e.id === 0x0010)?.data as any;
+        expect(alpnData.protocols).to.deep.equal([
             'h2',
             'http/1.1'
         ]);
@@ -256,20 +261,19 @@ describe("Read-TLS-Client-Hello", () => {
     it("can calculate the correct TLS fingerprint from a Chrome request", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
 
-        const { fingerprintData } = await readTlsClientHello(incomingData);
+        const clientHello = await readTlsClientHello(incomingData);
 
-        const [
-            tlsVersion,
-            ciphers,
-            extension,
-            groups,
-            curveFormats
-        ] = fingerprintData;
+        const ciphers = clientHello.cipherSuites.filter(c => !isGREASE(c));
+        const extensionIds = clientHello.extensions.map(e => e.id).filter(id => !isGREASE(id));
+        const groups = (clientHello.extensions.find(e => e.id === 0x000A)?.data as any)
+            ?.groups.filter((g: number) => !isGREASE(g)) ?? [];
+        const curveFormats = (clientHello.extensions.find(e => e.id === 0x000B)?.data as any)
+            ?.formats ?? [];
 
-        expect(tlsVersion).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
+        expect(clientHello.version).to.equal(771); // TLS 1.2 - now set even for TLS 1.3 for backward compat
         expect(ciphers.slice(0, 3)).to.deep.equal([4865, 4866, 4867]);
         expect(ciphers.length).to.equal(15);
-        expect(extension).to.deep.equal([
+        expect(extensionIds).to.deep.equal([
             0,
             23,
             65281,
@@ -290,7 +294,7 @@ describe("Read-TLS-Client-Hello", () => {
         expect(groups).to.deep.equal([29, 23, 24]);
         expect(curveFormats).to.deep.equal([0]);
 
-        const fingerprint = calculateJa3FromFingerprintData(fingerprintData);
+        const fingerprint = calculateJa3(clientHello);
         expect(fingerprint).to.equal('cd08e31494f9531f560d64c695473da9');
     });
 
@@ -354,24 +358,13 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // No response, we don't care
 
         const tlsSocket = await tlsSocketPromise;
+        const ch = tlsSocket.tlsClientHello!;
 
-        const [
-            tlsVersion,
-            ciphers,
-            extension,
-            groups,
-            curveFormats,
-            sigAlgorithms
-        ] = tlsSocket.tlsClientHello!.fingerprintData;
-
-        expect(tlsSocket.tlsClientHello!.fingerprintData.length).to.equal(6);
-        expect(tlsVersion).to.equal(771);
-        expect(ciphers.length).to.be.greaterThan(0);
-        expect(extension.length).to.be.greaterThan(0);
-        expect(groups.length).to.be.greaterThan(0);
-        expect(curveFormats.length).to.be.greaterThan(0);
-        expect(sigAlgorithms.length).to.be.greaterThan(0);
-
+        expect(ch.version).to.equal(771);
+        expect(ch.cipherSuites.length).to.be.greaterThan(0);
+        expect(ch.extensions.length).to.be.greaterThan(0);
+        expect(ch.ja3).to.be.a('string');
+        expect(ch.ja4).to.be.a('string');
     });
 
     it("doesn't break non-TLS connections", async () => {
@@ -429,19 +422,18 @@ describe("Read-TLS-Client-Hello", () => {
         }).on('error', () => {}); // Socket will fail, since server never responds, that's OK
 
         const incomingSocket = await incomingSocketPromise;
-        const { fingerprintData } = await readTlsClientHello(incomingSocket);
+        const clientHello = await readTlsClientHello(incomingSocket);
 
-        const [
-            tlsVersion,
-            ciphers,
-            extension,
-            groups,
-            curveFormats
-        ] = fingerprintData;
+        const ciphers = clientHello.cipherSuites.filter(c => !isGREASE(c));
+        const extensionIds = clientHello.extensions.map(e => e.id).filter(id => !isGREASE(id));
+        const groups = (clientHello.extensions.find(e => e.id === 0x000A)?.data as any)
+            ?.groups.filter((g: number) => !isGREASE(g)) ?? [];
+        const curveFormats = (clientHello.extensions.find(e => e.id === 0x000B)?.data as any)
+            ?.formats ?? [];
 
-        expect(tlsVersion).to.equal(769); // TLS 1!
+        expect(clientHello.version).to.equal(769); // TLS 1!
         expect(ciphers.slice(0, 3)).to.deep.equal([49162, 49172, 57]);
-        expect(extension).to.deep.equal([
+        expect(extensionIds).to.deep.equal([
             11,
             10,
             35,
@@ -458,7 +450,7 @@ describe("ClientHello parsing", () => {
 
     it("parses the full clientHello from the Chrome fixture", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
-        const { clientHello } = await readTlsClientHello(incomingData);
+        const clientHello = await readTlsClientHello(incomingData);
 
         // Base fields
         expect(clientHello.version).to.equal(0x0303);
@@ -489,7 +481,7 @@ describe("ClientHello parsing", () => {
 
     it("parses Chrome fixture extension data correctly", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
-        const { clientHello } = await readTlsClientHello(incomingData);
+        const clientHello = await readTlsClientHello(incomingData);
 
         const extById = new Map(clientHello.extensions.map(e => [e.id, e.data]));
 
@@ -550,23 +542,21 @@ describe("ClientHello parsing", () => {
         expect(padding.paddingLength).to.be.greaterThan(0);
     });
 
-    it("preserves GREASE in clientHello but filters it from fingerprintData", async () => {
+    it("preserves GREASE in clientHello while calculateJa3 filters it", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
-        const { clientHello, fingerprintData } = await readTlsClientHello(incomingData);
+        const clientHello = await readTlsClientHello(incomingData);
 
         // clientHello preserves GREASE
         expect(clientHello.cipherSuites.some(c => isGREASE(c))).to.equal(true);
         expect(clientHello.extensions.some(e => isGREASE(e.id))).to.equal(true);
 
-        // fingerprintData filters GREASE
-        const [, ciphers, extensions, groups] = fingerprintData;
-        expect(ciphers.every(c => !isGREASE(c))).to.equal(true);
-        expect(extensions.every(e => !isGREASE(e))).to.equal(true);
-        expect(groups.every(g => !isGREASE(g))).to.equal(true);
+        // JA3 calculation works (internally filters GREASE)
+        const ja3 = calculateJa3(clientHello);
+        expect(ja3).to.equal('cd08e31494f9531f560d64c695473da9');
 
-        // Verify the counts differ (Chrome includes GREASE values)
-        expect(clientHello.cipherSuites.length).to.be.greaterThan(ciphers.length);
-        expect(clientHello.extensions.length).to.be.greaterThan(extensions.length);
+        // Non-GREASE counts are smaller than total
+        const nonGreaseCiphers = clientHello.cipherSuites.filter(c => !isGREASE(c));
+        expect(clientHello.cipherSuites.length).to.be.greaterThan(nonGreaseCiphers.length);
     });
 
     let server: net.Server & { destroy?: () => Promise<void> };
@@ -588,7 +578,7 @@ describe("ClientHello parsing", () => {
             .on('error', () => {});
 
         const incomingSocket = await incomingSocketPromise;
-        const { clientHello } = await readTlsClientHello(incomingSocket);
+        const clientHello = await readTlsClientHello(incomingSocket);
 
         // Structural checks that hold regardless of Node version
         expect(clientHello.version).to.equal(0x0303);
@@ -647,13 +637,15 @@ describe("ClientHello parsing", () => {
         }).on('error', () => {});
 
         const tlsSocket = await tlsSocketPromise;
-        const ch = tlsSocket.tlsClientHello!.clientHello;
+        const ch = tlsSocket.tlsClientHello!;
 
         expect(ch).to.not.be.undefined;
         expect(ch.version).to.equal(0x0303);
         expect(ch.random.length).to.equal(32);
         expect(ch.cipherSuites.length).to.be.greaterThan(0);
         expect(ch.extensions.length).to.be.greaterThan(0);
+        expect(ch.ja3).to.be.a('string');
+        expect(ch.ja4).to.be.a('string');
     });
 
     it("handles malformed extension data gracefully", async () => {
@@ -786,7 +778,7 @@ describe("Lookup tables", () => {
 
     it("can resolve all cipher suites from a Chrome ClientHello", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
-        const { clientHello } = await readTlsClientHello(incomingData);
+        const clientHello = await readTlsClientHello(incomingData);
 
         const nonGreaseCiphers = clientHello.cipherSuites.filter(c => !isGREASE(c));
         for (const cipher of nonGreaseCiphers) {
@@ -796,11 +788,62 @@ describe("Lookup tables", () => {
 
     it("can resolve all extension IDs from a Chrome ClientHello", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
-        const { clientHello } = await readTlsClientHello(incomingData);
+        const clientHello = await readTlsClientHello(incomingData);
 
         const nonGreaseExts = clientHello.extensions.filter(e => !isGREASE(e.id));
         for (const ext of nonGreaseExts) {
             expect(EXTENSIONS[ext.id], `Missing extension ${ext.id}`).to.be.a('string');
         }
+    });
+});
+
+describe("getExtensionData", () => {
+
+    it("retrieves SNI from a Chrome ClientHello", async () => {
+        const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
+        const clientHello = await readTlsClientHello(incomingData);
+
+        const sni = getExtensionData(clientHello.extensions, 0x0000) as { serverName: string };
+        expect(sni.serverName).to.equal('localhost');
+    });
+
+    it("retrieves ALPN from a Chrome ClientHello", async () => {
+        const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
+        const clientHello = await readTlsClientHello(incomingData);
+
+        const alpn = getExtensionData(clientHello.extensions, 0x0010) as { protocols: string[] };
+        expect(alpn.protocols).to.deep.equal(['h2', 'http/1.1']);
+    });
+
+    it("returns null for absent extensions", async () => {
+        const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
+        const clientHello = await readTlsClientHello(incomingData);
+
+        // heartbeat is not present in the Chrome fixture
+        expect(getExtensionData(clientHello.extensions, 0x000F)).to.equal(null);
+    });
+
+    let server: net.Server & { destroy?: () => Promise<void> };
+    afterEach(() => server?.destroy?.().catch(() => {}));
+
+    it("returns null for SNI/ALPN when not present", async () => {
+        const netServer = makeDestroyable(new net.Server());
+        server = netServer;
+
+        netServer.listen();
+        await new Promise((resolve) => netServer.on('listening', resolve));
+
+        let incomingSocketPromise = getDeferred<net.Socket>();
+        netServer.on('connection', (socket) => incomingSocketPromise.resolve(socket));
+
+        const port = (netServer.address() as net.AddressInfo).port;
+        tls.connect({ host: 'localhost', port }).on('error', () => {});
+
+        const incomingSocket = await incomingSocketPromise;
+        const clientHello = await readTlsClientHello(incomingSocket);
+
+        // Pure TLS connection without SNI or ALPN
+        expect(getExtensionData(clientHello.extensions, 0x0000)).to.equal(null);
+        expect(getExtensionData(clientHello.extensions, 0x0010)).to.equal(null);
     });
 });
