@@ -4,7 +4,7 @@
 
 A pure-JS module to read TLS client hello data and calculate TLS fingerprints from an incoming socket connection. Tiny, with zero runtime dependencies.
 
-Using this, you can analyze incoming TLS connections before you start a full handshake, and using their fingerprints you can recognize certain TLS clients - e.g. specific browser, cURL, or even the specific versions of a specific programming language a client is using - regardless of the content of the request they send.
+Using this, you can analyze incoming TLS connections before you start a full handshake. This gives you the full parsed ClientHello, and TLS fingerprints (JA3/JA4) that let you recognize certain TLS clients (e.g. specific browsers, cURL, or even specific versions of a programming language) regardless of the content of the request they send.
 
 See https://httptoolkit.com/blog/tls-fingerprinting-node-js/#how-does-tls-fingerprinting-work for more background on how TLS fingerprinting works.
 
@@ -51,13 +51,62 @@ The returned promise resolves to an object, containing:
     4. An array of supported group ids (excluding GREASE)
     5. An array of supported elliptic curve ids
     6. An array of signature algorithms (TLS 1.3)
+* `clientHello` - The full parsed ClientHello message (see [ClientHello format](#clienthello-format) below)
 
 ### TLS fingerprinting
 
-To calculate TLS fingerprints manually, there are a few options exported from this module:
+To calculate TLS fingerprints, there are a few options exported from this module:
 
 * `getTlsFingerprintAsJa3` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA3 hash string, e.g. `cd08e31494f9531f560d64c695473da9`, instead of the raw hello components.
 * `getTlsFingerprintAsJa4` - Reads from a stream, just like `readTlsClientHello` above, but returns a promise for the JA4 hash string, e.g. `t13d591000_a33745022dd6_1f22a2ca17c4`, instead of the raw hello components.
 * `readTlsClientHello(stream)` - Reads the entire hello (see above). In the returned object, you can read the raw data components used for JA3 fingerprinting from the `fingerprintData` property.
-* `calculateJa3FromFingerprintData(data)` - Takes raw TLS fingerprint data, and returns the corresponding JA3 hash.
-* `calculateJa4FromHelloData(data)` - Takes the full hello data, including the serverName, alpnProtocols & fingerprinting parameters returned by `readTlsClientHello`, and returns the corresponding JA4 hash, eg. `t13d591000_a33745022dd6_1f22a2ca17c4`.
+* `calculateJa3FromFingerprintData(fingerprintData)` - Takes raw TLS fingerprint data, and returns the corresponding JA3 hash.
+* `calculateJa4FromHelloData(helloData)` - Takes the full hello data, including the serverName, alpnProtocols & fingerprinting parameters returned by `readTlsClientHello`, and returns the corresponding JA4 hash, eg. `t13d591000_a33745022dd6_1f22a2ca17c4`.
+
+
+### ClientHello format
+
+The `clientHello` field contains the complete parsed ClientHello message:
+
+* `version` - The legacy version field (e.g. `0x0303` for TLS 1.2/1.3)
+* `random` - 32-byte client random as a Buffer
+* `sessionId` - Session ID as a Buffer (0–32 bytes, empty Buffer if absent)
+* `cipherSuites` - All cipher suite IDs as a number array, **including** GREASE values
+* `compressionMethods` - All compression method IDs as a number array
+* `extensions` - Ordered array of parsed extensions (see below)
+
+Each extension in the array has:
+
+* `id` - The numeric extension ID
+* `data` - Parsed extension data as an object, or `null` for unknown/unparseable/GREASE extensions
+
+GREASE values are preserved in `clientHello` (they're what the client actually sent), while they're filtered from `fingerprintData` (as required for JA3/JA4). Use the exported `isGREASE(value)` helper to identify GREASE values.
+
+Extensions with registered parsers return structured data. Flag extensions (like `extended_master_secret` or `signed_certificate_timestamp`) return `{}`. Unrecognized, unparseable or GREASE extensions return `null`.
+
+Parsed extensions include: `server_name`, `max_fragment_length`, `status_request`, `supported_groups`, `ec_point_formats`, `signature_algorithms`, `heartbeat`, `application_layer_protocol_negotiation`, `status_request_v2`, `signed_certificate_timestamp`, `padding`, `encrypt_then_mac`, `extended_master_secret`, `compress_certificate`, `record_size_limit`, `session_ticket`, `pre_shared_key`, `early_data`, `supported_versions`, `cookie`, `psk_key_exchange_modes`, `post_handshake_auth`, `signature_algorithms_cert`, `key_share`, `application_settings` (ALPS), `encrypted_client_hello` (ECH), and `renegotiation_info`.
+
+### Lookup tables
+
+All hello details (extensions, ciphers, etc) are exposed in `clientHello` with only numeric ids. To get human-readable names, lookup tables are provided:
+
+* `TLS_VERSIONS` - e.g. `0x0303` → `'TLS 1.2'`
+* `CIPHER_SUITES` - e.g. `0x1301` → `'TLS_AES_128_GCM_SHA256'`
+* `EXTENSIONS` - e.g. `0` → `'server_name'`, `51` → `'key_share'`
+* `SUPPORTED_GROUPS` - e.g. `29` → `'x25519'`, `4588` → `'X25519MLKEM768'`
+* `SIGNATURE_ALGORITHMS` - e.g. `0x0403` → `'ecdsa_secp256r1_sha256'`
+* `EC_POINT_FORMATS` - e.g. `0` → `'uncompressed'`
+* `COMPRESSION_METHODS` - e.g. `0` → `'null'`
+* `PSK_KEY_EXCHANGE_MODES` - e.g. `1` → `'psk_dhe_ke'`
+* `CERTIFICATE_COMPRESSION_ALGORITHMS` - e.g. `2` → `'brotli'`
+* `CERTIFICATE_STATUS_TYPES` - e.g. `1` → `'ocsp'`
+
+```javascript
+const { CIPHER_SUITES, EXTENSIONS, isGREASE } = require('read-tls-client-hello');
+
+const cipherNames = clientHello.cipherSuites
+    .filter(id => !isGREASE(id))
+    .map(id => CIPHER_SUITES[id] || `unknown (0x${id.toString(16)})`);
+```
+
+These are sourced from the IANA TLS registries and include post-quantum entries (ML-KEM, ML-DSA). Please open a PR to include any missing registered values.

@@ -3,6 +3,11 @@ import * as crypto from 'crypto';
 import * as tls from 'tls';
 import * as net from 'net';
 
+import { extensionParsers } from './extension-parsers';
+
+export { extensionParsers } from './extension-parsers';
+export * from './lookup-tables';
+
 type ErrorWithConsumedData = Error & {
     consumedData: Buffer
 };
@@ -52,12 +57,27 @@ const getUint16BE = (buffer: Buffer, offset: number) =>
 
 // https://datatracker.ietf.org/doc/html/draft-davidben-tls-grease-01 defines GREASE values for various
 // TLS fields, reserving 0a0a, 1a1a, 2a2a, etc for ciphers, extension ids & supported groups.
-const isGREASE = (value: number) => (value & 0x0f0f) == 0x0a0a;
+export const isGREASE = (value: number) => (value & 0x0f0f) == 0x0a0a;
+
+export type TlsExtension = {
+    id: number;
+    data: Record<string, unknown> | null;
+};
+
+export type TlsClientHelloMessage = {
+    version: number;
+    random: Buffer;
+    sessionId: Buffer;
+    cipherSuites: number[];
+    compressionMethods: number[];
+    extensions: TlsExtension[];
+};
 
 export type TlsHelloData = {
     serverName: string | undefined;
     alpnProtocols: string[] | undefined;
     fingerprintData: TlsFingerprintData;
+    clientHello: TlsClientHelloMessage;
 };
 
 export type TlsFingerprintData = [
@@ -204,17 +224,27 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
     const [compressionMethodsLength] = await collectBytes(helloDataStream, 1);
     const compressionMethods = await collectBytes(helloDataStream, compressionMethodsLength);
 
+    const allCipherSuiteIds: number[] = [];
+    for (let i = 0; i < cipherSuites.length; i += 2) {
+        allCipherSuiteIds.push(getUint16BE(cipherSuites, i));
+    }
+
+    const allCompressionMethods: number[] = Array.from(compressionMethods);
+
     const extensionsLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
     let readExtensionsDataLength = 0;
     const extensions: Array<{ id: Buffer, data: Buffer }> = [];
     let signatureAlgorithms: number[] = [];
+    const parsedExtensions: TlsExtension[] = [];
 
     while (readExtensionsDataLength < extensionsLength) {
         const extensionId = await collectBytes(helloDataStream, 2);
         const extensionLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
         const extensionData = await collectBytes(helloDataStream, extensionLength);
 
-        if (extensionId.readUInt16BE() === 13) {
+        const extIdNum = extensionId.readUInt16BE();
+
+        if (extIdNum === 13) {
             const sigAlgsLength = extensionData.readUInt16BE(0);
             const sigAlgs: number[] = [];
             for (let i = 2; i < sigAlgsLength + 2; i += 2) {
@@ -223,6 +253,17 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
             signatureAlgorithms = sigAlgs;
         }
 
+        let parsedData: Record<string, unknown> | null = null;
+        const parser = extensionParsers[extIdNum];
+        if (parser && !isGREASE(extIdNum)) {
+            try {
+                parsedData = parser(extensionData);
+            } catch {
+                parsedData = null; // Malformed extension data - fall back gracefully
+            }
+        }
+
+        parsedExtensions.push({ id: extIdNum, data: parsedData });
         extensions.push({ id: extensionId, data: extensionData });
         readExtensionsDataLength += 4 + extensionLength;
     }
@@ -232,12 +273,7 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
 
     const tlsVersionFingerprint = clientTlsVersion.readUint16BE()
 
-    const cipherFingerprint: number[] = [];
-    for (let i = 0; i < cipherSuites.length; i += 2) {
-        const cipherId = getUint16BE(cipherSuites, i);
-        if (isGREASE(cipherId)) continue;
-        cipherFingerprint.push(cipherId);
-    }
+    const cipherFingerprint: number[] = allCipherSuiteIds.filter(id => !isGREASE(id));
 
     const extensionsFingerprint: number[] = extensions
         .map(({ id }) => getUint16BE(id, 0))
@@ -282,7 +318,15 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
     return {
         serverName,
         alpnProtocols,
-        fingerprintData
+        fingerprintData,
+        clientHello: {
+            version: tlsVersionFingerprint,
+            random: clientRandom,
+            sessionId,
+            cipherSuites: allCipherSuiteIds,
+            compressionMethods: allCompressionMethods,
+            extensions: parsedExtensions
+        }
     };
 }
 
