@@ -477,6 +477,13 @@ describe("ClientHello parsing", () => {
         expect(clientHello.extensions[0].data).to.equal(null);
         // Last real extension before trailing GREASE is padding
         expect(extIds[extIds.length - 1]).to.equal(0x0015); // padding
+
+        // Every non-GREASE extension should have a parser (data !== null)
+        for (const ext of clientHello.extensions) {
+            if (!isGREASE(ext.id)) {
+                expect(ext.data, `Extension ${ext.id} (0x${ext.id.toString(16)}) has no parser`).to.not.equal(null);
+            }
+        }
     });
 
     it("parses Chrome fixture extension data correctly", async () => {
@@ -610,6 +617,13 @@ describe("ClientHello parsing", () => {
         const saExt = clientHello.extensions.find(e => e.id === 0x000D);
         expect(saExt).to.not.be.undefined;
         expect((saExt!.data as any).algorithms.length).to.be.greaterThan(0);
+
+        // Every non-GREASE extension should have a parser (data !== null)
+        for (const ext of clientHello.extensions) {
+            if (!isGREASE(ext.id)) {
+                expect(ext.data, `Extension ${ext.id} (0x${ext.id.toString(16)}) has no parser`).to.not.equal(null);
+            }
+        }
     });
 
     it("includes clientHello via trackClientHellos", async () => {

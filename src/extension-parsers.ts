@@ -1,12 +1,14 @@
 // Extension-specific parsers for TLS ClientHello extensions.
 // Each parser takes the raw extension data buffer and returns a structured object,
 // or null if the extension format is unknown/unparseable.
-
-export type TlsExtensionData = Record<string, unknown>;
+//
+// Return type annotations are intentionally omitted so that TypeScript infers the
+// specific shape of each parser's return value. This powers the per-extension
+// return types on getExtensionData().
 
 // --- Parsers for extensions already extracted in the main module ---
 
-export function parseSniExtension(data: Buffer): TlsExtensionData | null {
+export function parseSniExtension(data: Buffer) {
     // SNI list: 2-byte total length, then entries of [1-byte type, 2-byte name length, name]
     let offset = 0;
     while (offset < data.byteLength) {
@@ -27,10 +29,10 @@ export function parseSniExtension(data: Buffer): TlsExtensionData | null {
         if (entryType === 0x0) return { serverName: name };
     }
 
-    return { serverName: undefined };
+    return { serverName: undefined as string | undefined };
 }
 
-export function parseSupportedGroupsExtension(data: Buffer): TlsExtensionData {
+export function parseSupportedGroupsExtension(data: Buffer) {
     const listLength = data.readUInt16BE(0);
     const groups: number[] = [];
     for (let i = 2; i < listLength + 2; i += 2) {
@@ -39,7 +41,7 @@ export function parseSupportedGroupsExtension(data: Buffer): TlsExtensionData {
     return { groups };
 }
 
-export function parseEcPointFormatsExtension(data: Buffer): TlsExtensionData {
+export function parseEcPointFormatsExtension(data: Buffer) {
     const length = data[0];
     const formats: number[] = [];
     for (let i = 1; i <= length; i++) {
@@ -48,7 +50,7 @@ export function parseEcPointFormatsExtension(data: Buffer): TlsExtensionData {
     return { formats };
 }
 
-export function parseSignatureAlgorithmsExtension(data: Buffer): TlsExtensionData {
+export function parseSignatureAlgorithmsExtension(data: Buffer) {
     const listLength = data.readUInt16BE(0);
     const algorithms: number[] = [];
     for (let i = 2; i < listLength + 2; i += 2) {
@@ -57,7 +59,7 @@ export function parseSignatureAlgorithmsExtension(data: Buffer): TlsExtensionDat
     return { algorithms };
 }
 
-export function parseAlpnExtension(data: Buffer): TlsExtensionData {
+export function parseAlpnExtension(data: Buffer) {
     const protocols: string[] = [];
     const listLength = data.readUInt16BE(0);
     if (listLength !== data.byteLength - 2) return { protocols };
@@ -75,15 +77,15 @@ export function parseAlpnExtension(data: Buffer): TlsExtensionData {
 
 // --- New extension parsers ---
 
-export function parseMaxFragmentLengthExtension(data: Buffer): TlsExtensionData {
+export function parseMaxFragmentLengthExtension(data: Buffer) {
     return { maxFragmentLength: data[0] };
 }
 
-export function parseStatusRequestExtension(data: Buffer): TlsExtensionData {
+export function parseStatusRequestExtension(data: Buffer) {
     return { statusType: data[0] };
 }
 
-export function parseStatusRequestV2Extension(data: Buffer): TlsExtensionData {
+export function parseStatusRequestV2Extension(data: Buffer) {
     const statusTypes: number[] = [];
     const totalLength = data.readUInt16BE(0);
     let offset = 2;
@@ -99,11 +101,11 @@ export function parseStatusRequestV2Extension(data: Buffer): TlsExtensionData {
     return { statusTypes };
 }
 
-export function parsePaddingExtension(data: Buffer): TlsExtensionData {
+export function parsePaddingExtension(data: Buffer) {
     return { paddingLength: data.byteLength };
 }
 
-export function parseCompressCertificateExtension(data: Buffer): TlsExtensionData {
+export function parseCompressCertificateExtension(data: Buffer) {
     const length = data[0];
     const algorithms: number[] = [];
     for (let i = 1; i < 1 + length; i += 2) {
@@ -112,15 +114,15 @@ export function parseCompressCertificateExtension(data: Buffer): TlsExtensionDat
     return { algorithms };
 }
 
-export function parseRecordSizeLimitExtension(data: Buffer): TlsExtensionData {
+export function parseRecordSizeLimitExtension(data: Buffer) {
     return { recordSizeLimit: data.readUInt16BE(0) };
 }
 
-export function parseSessionTicketExtension(data: Buffer): TlsExtensionData {
+export function parseSessionTicketExtension(data: Buffer) {
     return { ticketLength: data.byteLength };
 }
 
-export function parsePreSharedKeyExtension(data: Buffer): TlsExtensionData {
+export function parsePreSharedKeyExtension(data: Buffer) {
     const identities: Array<{ identityLength: number; obfuscatedTicketAge: number }> = [];
     const identitiesLength = data.readUInt16BE(0);
     let offset = 2;
@@ -137,7 +139,7 @@ export function parsePreSharedKeyExtension(data: Buffer): TlsExtensionData {
     return { identities };
 }
 
-export function parseSupportedVersionsExtension(data: Buffer): TlsExtensionData {
+export function parseSupportedVersionsExtension(data: Buffer) {
     const length = data[0];
     const versions: number[] = [];
     for (let i = 1; i < 1 + length; i += 2) {
@@ -146,12 +148,12 @@ export function parseSupportedVersionsExtension(data: Buffer): TlsExtensionData 
     return { versions };
 }
 
-export function parseCookieExtension(data: Buffer): TlsExtensionData {
+export function parseCookieExtension(data: Buffer) {
     const cookieLength = data.readUInt16BE(0);
     return { cookieLength };
 }
 
-export function parsePskKeyExchangeModesExtension(data: Buffer): TlsExtensionData {
+export function parsePskKeyExchangeModesExtension(data: Buffer) {
     const length = data[0];
     const modes: number[] = [];
     for (let i = 1; i <= length; i++) {
@@ -160,12 +162,12 @@ export function parsePskKeyExchangeModesExtension(data: Buffer): TlsExtensionDat
     return { modes };
 }
 
-export function parseSignatureAlgorithmsCertExtension(data: Buffer): TlsExtensionData {
+export function parseSignatureAlgorithmsCertExtension(data: Buffer): ReturnType<typeof parseSignatureAlgorithmsExtension> {
     // Same format as signature_algorithms
     return parseSignatureAlgorithmsExtension(data);
 }
 
-export function parseKeyShareExtension(data: Buffer): TlsExtensionData {
+export function parseKeyShareExtension(data: Buffer) {
     const entries: Array<{ group: number; keyExchangeLength: number }> = [];
     const totalLength = data.readUInt16BE(0);
     let offset = 2;
@@ -181,16 +183,16 @@ export function parseKeyShareExtension(data: Buffer): TlsExtensionData {
     return { entries };
 }
 
-export function parseRenegotiationInfoExtension(data: Buffer): TlsExtensionData {
+export function parseRenegotiationInfoExtension(data: Buffer) {
     const renegotiatedConnectionLength = data[0];
     return { renegotiatedConnectionLength };
 }
 
-export function parseHeartbeatExtension(data: Buffer): TlsExtensionData {
+export function parseHeartbeatExtension(data: Buffer) {
     return { mode: data[0] };
 }
 
-export function parseEncryptedClientHelloExtension(data: Buffer): TlsExtensionData {
+export function parseEncryptedClientHelloExtension(data: Buffer) {
     const type = data[0];
     if (type === 1) {
         // Inner: empty after type byte
@@ -207,18 +209,19 @@ export function parseEncryptedClientHelloExtension(data: Buffer): TlsExtensionDa
     return { type, kdfId, aeadId, configId, encLength, payloadLength };
 }
 
-export function parseApplicationSettingsExtension(data: Buffer): TlsExtensionData {
+export function parseApplicationSettingsExtension(data: Buffer): ReturnType<typeof parseAlpnExtension> {
     // Same format as ALPN
     return parseAlpnExtension(data);
 }
 
 // Flag extension parser - returns empty object for extensions whose presence is the signal
-function flagExtension(): TlsExtensionData {
-    return {};
+function flagExtension() {
+    return {} as Record<string, never>;
 }
 
-// Map of extension ID to parser function
-export const extensionParsers: Record<number, (data: Buffer) => TlsExtensionData | null> = {
+// Map of extension ID to parser function. Uses `as const satisfies` so that
+// TypeScript preserves the per-parser return types for each numeric key.
+export const extensionParsers = {
     0x0000: parseSniExtension,
     0x0001: parseMaxFragmentLengthExtension,
     0x0005: parseStatusRequestExtension,
@@ -246,4 +249,11 @@ export const extensionParsers: Record<number, (data: Buffer) => TlsExtensionData
     0x4469: parseApplicationSettingsExtension,  // ALPS
     0xFE0D: parseEncryptedClientHelloExtension, // ECH
     0xFF01: parseRenegotiationInfoExtension,
+} as const satisfies Record<number, (data: Buffer) => Record<string, unknown> | null>;
+
+// Per-extension return type map, inferred from the parser functions above.
+// ExtensionDataMap[0x0033] = { entries: Array<{ group: number; keyExchangeLength: number }> }
+type Parsers = typeof extensionParsers;
+export type ExtensionDataMap = {
+    [K in keyof Parsers]: NonNullable<ReturnType<Parsers[K]>>
 };

@@ -4,10 +4,12 @@ import * as tls from 'tls';
 import * as net from 'net';
 
 import { extensionParsers } from './extension-parsers';
+import type { ExtensionDataMap } from './extension-parsers';
 import { EXTENSION_IDS } from './lookup-tables';
 import type { ExtensionName } from './lookup-tables';
 
 export { extensionParsers } from './extension-parsers';
+export type { ExtensionDataMap } from './extension-parsers';
 export * from './lookup-tables';
 
 type ErrorWithConsumedData = Error & {
@@ -73,6 +75,19 @@ export type TlsClientHelloMessage = {
     extensions: TlsExtension[];
 };
 
+// Resolve an ExtensionName (string) to the numeric key in extensionParsers
+type ResolveExtensionId<N extends ExtensionName> = (typeof EXTENSION_IDS)[N] & keyof ExtensionDataMap;
+
+// Per-extension typed overloads: known numeric ID or string name → specific return type
+export function getExtensionData<K extends keyof ExtensionDataMap>(
+    extensions: TlsExtension[], id: K
+): ExtensionDataMap[K] | null | undefined;
+export function getExtensionData<N extends ExtensionName>(
+    extensions: TlsExtension[], id: N
+): ExtensionDataMap[ResolveExtensionId<N>] | null | undefined;
+export function getExtensionData(
+    extensions: TlsExtension[], id: number
+): Record<string, unknown> | null | undefined;
 export function getExtensionData(extensions: TlsExtension[], id: number | ExtensionName) {
     const numId = typeof id === 'string'
         ? EXTENSION_IDS[id]
@@ -186,7 +201,7 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
         const extensionData = await collectBytes(helloDataStream, extensionLength);
 
         let parsedData: Record<string, unknown> | null = null;
-        const parser = extensionParsers[extensionId];
+        const parser = (extensionParsers as Record<number, ((data: Buffer) => Record<string, unknown> | null) | undefined>)[extensionId];
         if (parser && !isGREASE(extensionId)) {
             try {
                 parsedData = parser(extensionData);
