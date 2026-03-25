@@ -71,9 +71,11 @@ To calculate TLS fingerprints, there are a few options exported from this module
 
 ### Accessing extension data
 
-Use `getExtensionData(extensions, id)` to look up a specific extension's parsed data by numeric ID, name, or alias. Returns the parsed data object, `undefined` if the extension is not present, or `null` if it is present but unknown/unparseable (e.g. GREASE).
+Use `getExtensionData(clientHello, id)` to look up a specific extension's parsed data by numeric ID, name, or alias. Returns the parsed data object, `undefined` if the extension is not present, or `null` if it is present but unknown/unparseable (e.g. GREASE).
 
-Names should be the officially registered name from https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml. Convenient aliases are provided for common cases, including `sni`, `alpn`, `alps` and `ech`. The API is typed so that with TypeScript only valid names are allowed (although any raw numeric ID can be used). PRs to add more aliases are welcome.
+Names should be the officially registered name from https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml. Convenient aliases are provided for common cases, including `sni`, `alpn`, `alps` and `ech` - PRs for more common aliases welcome.
+
+The API is typed so that with TypeScript only valid names are allowed (although any raw numeric ID can be used), and the return type is specific to the extension requested — e.g. `getExtensionData(hello, 'sni')` returns `{ serverName: string } | null | undefined`.
 
 ```javascript
 const { readTlsClientHello, getExtensionData } = require('read-tls-client-hello');
@@ -81,21 +83,21 @@ const { readTlsClientHello, getExtensionData } = require('read-tls-client-hello'
 const clientHello = await readTlsClientHello(socket);
 
 // Get the server name (SNI)
-const sniData = getExtensionData(clientHello.extensions, 'sni'); // or 'server_name', or 0x0
+const sniData = getExtensionData(clientHello, 'sni'); // or 'server_name', or 0x0
 const serverName = sniData?.serverName;
 
 // Get ALPN protocols
-const alpnData = getExtensionData(clientHello.extensions, 'alpn');
+const alpnData = getExtensionData(clientHello, 'alpn');
 const protocols = alpnData?.protocols;
 
 // Get supported TLS versions
-const svData = getExtensionData(clientHello.extensions, 'supported_versions');
+const svData = getExtensionData(clientHello, 'supported_versions');
 const versions = svData?.versions; // e.g. [0x0304, 0x0303]
 ```
 
 ### Lookup tables
 
-All hello details (extensions, ciphers, etc) are exposed with numeric IDs. Lookup tables map these to human-readable names. All tables are fully typed with `as const`, so known keys return literal values, which other keys' values may be undefined.
+All hello details (extensions, ciphers, etc) are exposed with numeric IDs. Lookup tables map these to human-readable names. All tables are fully typed with `as const`, so known keys return literal values, while unknown keys' values may be undefined.
 
 Forward tables (ID → name) for display:
 

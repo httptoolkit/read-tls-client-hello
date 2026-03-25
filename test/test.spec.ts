@@ -817,10 +817,10 @@ describe("getExtensionData", () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
         const clientHello = await readTlsClientHello(incomingData);
 
-        const sni = getExtensionData(clientHello.extensions, 'sni') as { serverName: string };
+        const sni = getExtensionData(clientHello, 'sni') as { serverName: string };
         expect(sni.serverName).to.equal('localhost');
 
-        const alpn = getExtensionData(clientHello.extensions, 'alpn') as { protocols: string[] };
+        const alpn = getExtensionData(clientHello, 'alpn') as { protocols: string[] };
         expect(alpn.protocols).to.deep.equal(['h2', 'http/1.1']);
     });
 
@@ -828,7 +828,7 @@ describe("getExtensionData", () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
         const clientHello = await readTlsClientHello(incomingData);
 
-        const sni = getExtensionData(clientHello.extensions, 0x0) as { serverName: string };
+        const sni = getExtensionData(clientHello, 0x0) as { serverName: string };
         expect(sni.serverName).to.equal('localhost');
     });
 
@@ -837,12 +837,12 @@ describe("getExtensionData", () => {
         const clientHello = await readTlsClientHello(incomingData);
 
         // Extension not present in the hello → undefined
-        expect(getExtensionData(clientHello.extensions, 'heartbeat')).to.equal(undefined);
-        expect(getExtensionData(clientHello.extensions, 98765)).to.equal(undefined);
+        expect(getExtensionData(clientHello, 'heartbeat')).to.equal(undefined);
+        expect(getExtensionData(clientHello, 98765)).to.equal(undefined);
 
         // GREASE extension is present but unparseable → null
         const greaseExt = clientHello.extensions.find(e => isGREASE(e.id))!;
-        expect(getExtensionData(clientHello.extensions, greaseExt.id)).to.equal(null);
+        expect(getExtensionData(clientHello, greaseExt.id)).to.equal(null);
     });
 
 });

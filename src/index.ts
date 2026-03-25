@@ -56,7 +56,6 @@ const collectBytes = (stream: stream.Readable, byteLength: number) => {
     });
 };
 
-
 // https://datatracker.ietf.org/doc/html/draft-davidben-tls-grease-01 defines GREASE values for various
 // TLS fields, reserving 0a0a, 1a1a, 2a2a, etc for ciphers, extension ids & supported groups.
 export const isGREASE = (value: number) => (value & 0x0f0f) == 0x0a0a;
@@ -80,19 +79,19 @@ type ResolveExtensionId<N extends ExtensionName> = (typeof EXTENSION_IDS)[N] & k
 
 // Per-extension typed overloads: known numeric ID or string name → specific return type
 export function getExtensionData<K extends keyof ExtensionDataMap>(
-    extensions: TlsExtension[], id: K
+    clientHello: TlsClientHelloMessage, id: K
 ): ExtensionDataMap[K] | null | undefined;
 export function getExtensionData<N extends ExtensionName>(
-    extensions: TlsExtension[], id: N
+    clientHello: TlsClientHelloMessage, id: N
 ): ExtensionDataMap[ResolveExtensionId<N>] | null | undefined;
 export function getExtensionData(
-    extensions: TlsExtension[], id: number
+    clientHello: TlsClientHelloMessage, id: number
 ): Record<string, unknown> | null | undefined;
-export function getExtensionData(extensions: TlsExtension[], id: number | ExtensionName) {
+export function getExtensionData(clientHello: TlsClientHelloMessage, id: number | ExtensionName) {
     const numId = typeof id === 'string'
         ? EXTENSION_IDS[id]
         : id;
-    return extensions.find(e => e.id === numId)?.data;
+    return clientHello.extensions.find(e => e.id === numId)?.data;
 }
 
 /**
@@ -228,10 +227,10 @@ export function calculateJa3(clientHello: TlsClientHelloMessage) {
     const ciphers = clientHello.cipherSuites.filter(id => !isGREASE(id));
     const extensionIds = clientHello.extensions.map(e => e.id).filter(id => !isGREASE(id));
 
-    const groups = (getExtensionData(clientHello.extensions, 0x000A) as { groups: number[] } | null)
+    const groups = getExtensionData(clientHello, 0x000A)
         ?.groups.filter(id => !isGREASE(id)) ?? [];
 
-    const curveFormats = (getExtensionData(clientHello.extensions, 0x000B) as { formats: number[] } | null)
+    const curveFormats = getExtensionData(clientHello, 0x000B)
         ?.formats ?? [];
 
     const fingerprintString = [
@@ -253,12 +252,9 @@ export function calculateJa4(clientHello: TlsClientHelloMessage): string {
     const ciphers = clientHello.cipherSuites.filter(id => !isGREASE(id));
     const extensionIds = clientHello.extensions.map(e => e.id).filter(id => !isGREASE(id));
 
-    const serverName = (getExtensionData(clientHello.extensions, 0x0000) as { serverName: string } | null)
-        ?.serverName;
-    const alpnProtocols = (getExtensionData(clientHello.extensions, 0x0010) as { protocols: string[] } | null)
-        ?.protocols;
-    const sigAlgorithms = (getExtensionData(clientHello.extensions, 0x000D) as { algorithms: number[] } | null)
-        ?.algorithms ?? [];
+    const serverName = getExtensionData(clientHello, 0x0000)?.serverName;
+    const alpnProtocols = getExtensionData(clientHello, 0x0010)?.protocols;
+    const sigAlgorithms = getExtensionData(clientHello, 0x000D)?.algorithms ?? [];
 
     // Part A: Protocol info
     const protocol = 't'; // We only handle TCP for now
