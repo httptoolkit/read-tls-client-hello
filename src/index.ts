@@ -52,8 +52,6 @@ const collectBytes = (stream: stream.Readable, byteLength: number) => {
     });
 };
 
-const getUint16BE = (buffer: Buffer, offset: number) =>
-    (buffer[offset] << 8) + buffer[offset+1];
 
 // https://datatracker.ietf.org/doc/html/draft-davidben-tls-grease-01 defines GREASE values for various
 // TLS fields, reserving 0a0a, 1a1a, 2a2a, etc for ciphers, extension ids & supported groups.
@@ -78,7 +76,7 @@ export function getExtensionData(extensions: TlsExtension[], id: number) {
 }
 
 /**
- * Seperate error class. If you want to detect TLS parsing errors, but ignore TLS fingerprint
+ * Separate error class. If you want to detect TLS parsing errors, but ignore TLS fingerprint
  * issues from definitely-not-TLS traffic, you can ignore all instances of this error.
  */
 export class NonTlsError extends Error {
@@ -101,7 +99,7 @@ async function extractTlsHello(inputStream: stream.Readable): Promise<Buffer> {
         consumedData.push(await collectBytes(inputStream, 2));
         const recordLengthBytes = await collectBytes(inputStream, 2);
         consumedData.push(recordLengthBytes);
-        const recordLength = recordLengthBytes.readUint16BE();
+        const recordLength = recordLengthBytes.readUInt16BE(0);
 
         consumedData.push(await collectBytes(inputStream, recordLength));
 
@@ -160,7 +158,7 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
     const [sessionIdLength] = await collectBytes(helloDataStream, 1);
     const sessionId = await collectBytes(helloDataStream, sessionIdLength);
 
-    const cipherSuitesLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
+    const cipherSuitesLength = (await collectBytes(helloDataStream, 2)).readUInt16BE(0);
     const cipherSuites = await collectBytes(helloDataStream, cipherSuitesLength);
 
     const [compressionMethodsLength] = await collectBytes(helloDataStream, 1);
@@ -168,18 +166,18 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
 
     const allCipherSuiteIds: number[] = [];
     for (let i = 0; i < cipherSuites.length; i += 2) {
-        allCipherSuiteIds.push(getUint16BE(cipherSuites, i));
+        allCipherSuiteIds.push(cipherSuites.readUInt16BE(i));
     }
 
     const allCompressionMethods: number[] = Array.from(compressionMethods);
 
-    const extensionsLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
+    const extensionsLength = (await collectBytes(helloDataStream, 2)).readUInt16BE(0);
     let readExtensionsDataLength = 0;
     const parsedExtensions: TlsExtension[] = [];
 
     while (readExtensionsDataLength < extensionsLength) {
-        const extensionId = (await collectBytes(helloDataStream, 2)).readUInt16BE();
-        const extensionLength = (await collectBytes(helloDataStream, 2)).readUint16BE();
+        const extensionId = (await collectBytes(helloDataStream, 2)).readUInt16BE(0);
+        const extensionLength = (await collectBytes(helloDataStream, 2)).readUInt16BE(0);
         const extensionData = await collectBytes(helloDataStream, extensionLength);
 
         let parsedData: Record<string, unknown> | null = null;
@@ -197,7 +195,7 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
     }
 
     return {
-        version: clientTlsVersion.readUint16BE(),
+        version: clientTlsVersion.readUInt16BE(0),
         random: clientRandom,
         sessionId,
         cipherSuites: allCipherSuiteIds,
