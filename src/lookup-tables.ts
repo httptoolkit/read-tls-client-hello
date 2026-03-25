@@ -519,16 +519,27 @@ export const SUPPORTED_GROUPS: Record<number, string> = {
 };
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-signaturescheme
+// Also includes legacy TLS 1.2 (hash, signature) byte-pair values from RFC 5246 section 7.4.1.4.1
 export const SIGNATURE_ALGORITHMS: Record<number, string> = {
+    // Legacy TLS 1.2 byte-pair schemes (hash << 8 | sig): hash 2=SHA-1, 3=SHA-224, 4=SHA-256,
+    // 5=SHA-384, 6=SHA-512; sig 1=RSA, 2=DSA, 3=ECDSA
     0x0201: 'rsa_pkcs1_sha1',
+    0x0202: 'dsa_sha1',
     0x0203: 'ecdsa_sha1',
+    0x0301: 'rsa_pkcs1_sha224',
+    0x0302: 'dsa_sha224',
+    0x0303: 'ecdsa_sha224',
+    // TLS 1.3 named signature schemes
     0x0401: 'rsa_pkcs1_sha256',
+    0x0402: 'dsa_sha256',
     0x0403: 'ecdsa_secp256r1_sha256',
     0x0420: 'rsa_pkcs1_sha256_legacy',
     0x0501: 'rsa_pkcs1_sha384',
+    0x0502: 'dsa_sha384',
     0x0503: 'ecdsa_secp384r1_sha384',
     0x0520: 'rsa_pkcs1_sha384_legacy',
     0x0601: 'rsa_pkcs1_sha512',
+    0x0602: 'dsa_sha512',
     0x0603: 'ecdsa_secp521r1_sha512',
     0x0620: 'rsa_pkcs1_sha512_legacy',
     0x0704: 'eccsi_sha256',
