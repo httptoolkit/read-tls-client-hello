@@ -42,7 +42,7 @@ If parsing fails, this method will throw an error, but will still ensure all dat
 
 The returned promise resolves to a `TlsClientHelloMessage` object containing:
 
-* `version` - The legacy version field (e.g. `0x0303` for TLS 1.2/1.3)
+* `version` - The ClientHello version field (`0x0303` for TLS 1.2 and 1.3 — for TLS 1.3+, check the `supported_versions` extension for the real negotiated version)
 * `random` - 32-byte client random as a Buffer
 * `sessionId` - Session ID as a Buffer (0–32 bytes, empty Buffer if absent)
 * `cipherSuites` - All cipher suite IDs as a number array, **including** GREASE values
@@ -73,10 +73,10 @@ To calculate TLS fingerprints, there are a few options exported from this module
 
 Use `getExtensionData(extensions, id)` to look up a specific extension's parsed data by numeric ID, name, or alias. Returns the data object, or `null` if the extension is not present.
 
-Names should be the officially registered name from https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml. Convenient aliases are provided for common cases, including `sni`, `alpn`, `alps` and `ech`. The API is typed so with TypeScript only valid names are allowed (although any raw numeric id can be used). PRs to add more aliases are welcome.
+Names should be the officially registered name from https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml. Convenient aliases are provided for common cases, including `sni`, `alpn`, `alps` and `ech`. The API is typed so that with TypeScript only valid names are allowed (although any raw numeric ID can be used). PRs to add more aliases are welcome.
 
 ```javascript
-const { readTlsClientHello, getExtensionData, EXTENSION_IDS } = require('read-tls-client-hello');
+const { readTlsClientHello, getExtensionData } = require('read-tls-client-hello');
 
 const clientHello = await readTlsClientHello(socket);
 
