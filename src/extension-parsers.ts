@@ -162,7 +162,7 @@ export function parsePskKeyExchangeModesExtension(data: Buffer) {
     return { modes };
 }
 
-export function parseSignatureAlgorithmsCertExtension(data: Buffer): ReturnType<typeof parseSignatureAlgorithmsExtension> {
+export function parseSignatureAlgorithmsCertExtension(data: Buffer) {
     // Same format as signature_algorithms
     return parseSignatureAlgorithmsExtension(data);
 }
@@ -209,7 +209,7 @@ export function parseEncryptedClientHelloExtension(data: Buffer) {
     return { type, kdfId, aeadId, configId, encLength, payloadLength };
 }
 
-export function parseApplicationSettingsExtension(data: Buffer): ReturnType<typeof parseAlpnExtension> {
+export function parseApplicationSettingsExtension(data: Buffer) {
     // Same format as ALPN
     return parseAlpnExtension(data);
 }
