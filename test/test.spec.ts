@@ -818,11 +818,17 @@ describe("getExtensionData", () => {
         expect(sni.serverName).to.equal('localhost');
     });
 
-    it("returns null for absent extensions", async () => {
+    it("returns undefined for absent extensions, null for unparseable", async () => {
         const incomingData = fs.createReadStream(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
         const clientHello = await readTlsClientHello(incomingData);
-        expect(getExtensionData(clientHello.extensions, 'heartbeat')).to.equal(null);
-        expect(getExtensionData(clientHello.extensions, 98765)).to.equal(null);
+
+        // Extension not present in the hello → undefined
+        expect(getExtensionData(clientHello.extensions, 'heartbeat')).to.equal(undefined);
+        expect(getExtensionData(clientHello.extensions, 98765)).to.equal(undefined);
+
+        // GREASE extension is present but unparseable → null
+        const greaseExt = clientHello.extensions.find(e => isGREASE(e.id))!;
+        expect(getExtensionData(clientHello.extensions, greaseExt.id)).to.equal(null);
     });
 
 });

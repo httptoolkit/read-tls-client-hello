@@ -71,7 +71,7 @@ To calculate TLS fingerprints, there are a few options exported from this module
 
 ### Accessing extension data
 
-Use `getExtensionData(extensions, id)` to look up a specific extension's parsed data by numeric ID, name, or alias. Returns the data object, or `null` if the extension is not present.
+Use `getExtensionData(extensions, id)` to look up a specific extension's parsed data by numeric ID, name, or alias. Returns the parsed data object, `undefined` if the extension is not present, or `null` if it is present but unknown/unparseable (e.g. GREASE).
 
 Names should be the officially registered name from https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml. Convenient aliases are provided for common cases, including `sni`, `alpn`, `alps` and `ech`. The API is typed so that with TypeScript only valid names are allowed (although any raw numeric ID can be used). PRs to add more aliases are welcome.
 

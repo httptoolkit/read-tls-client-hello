@@ -77,7 +77,7 @@ export function getExtensionData(extensions: TlsExtension[], id: number | Extens
     const numId = typeof id === 'string'
         ? EXTENSION_IDS[id]
         : id;
-    return extensions.find(e => e.id === numId)?.data ?? null;
+    return extensions.find(e => e.id === numId)?.data;
 }
 
 /**
