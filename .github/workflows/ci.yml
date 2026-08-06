@@ -7,7 +7,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x, 22.x, 24.x, '*']
+        node-version: [20.x, 22.x, 24.x, 24.19.0, '*']
 
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 'v22.20.0'
+          node-version: 'v24.19.0'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
           cache-dependency-path: 'package.json'
