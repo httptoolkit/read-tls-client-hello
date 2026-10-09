@@ -4,6 +4,7 @@ import * as net from 'net';
 import * as tls from 'tls';
 import * as http from 'http';
 import * as https from 'https';
+import { Readable } from 'stream';
 import { makeDestroyable, DestroyableServer } from 'destroyable-server';
 
 import { expect } from 'chai';
@@ -40,6 +41,7 @@ import {
     parseHeartbeatExtension,
     parseEncryptedClientHelloExtension,
     parseSignatureAlgorithmsCertExtension,
+    parseTrustAnchorsExtension,
 } from '../src/extension-parsers';
 
 const nodeMajorVersion = parseInt(process.version.slice(1).split('.')[0], 10);
@@ -762,6 +764,72 @@ describe("Extension parsers (unit tests)", () => {
         expect(parseSignatureAlgorithmsCertExtension(data)).to.deep.equal({
             algorithms: [0x0403, 0x0804]
         });
+    });
+});
+
+describe("Trust anchors extension parser", () => {
+
+    it("parses a list of trust anchor IDs", () => {
+        const data = Buffer.from([
+            0x00, 0x07, // list length
+            0x04, 0x81, 0xFD, 0x59, 0x01, // 32473.1 (example from the draft)
+            0x01, 0x05, // 5
+        ]);
+        expect(parseTrustAnchorsExtension(data)).to.deep.equal({
+            trustAnchors: [
+                Buffer.from([0x81, 0xFD, 0x59, 0x01]),
+                Buffer.from([0x05])
+            ]
+        });
+    });
+
+    it("parses an empty list", () => {
+        expect(parseTrustAnchorsExtension(Buffer.from([0x00, 0x00]))).to.deep.equal({
+            trustAnchors: []
+        });
+    });
+
+    it("rejects malformed data", () => {
+        // Wrong list length
+        expect(parseTrustAnchorsExtension(Buffer.from([0x00, 0x05, 0x01, 0x05]))).to.equal(null);
+        // ID overruns the list
+        expect(parseTrustAnchorsExtension(Buffer.from([0x00, 0x02, 0x02, 0x05]))).to.equal(null);
+        // Empty ID
+        expect(parseTrustAnchorsExtension(Buffer.from([0x00, 0x01, 0x00]))).to.equal(null);
+    });
+
+    it("is parsed from a full client hello", async () => {
+        const trustAnchorsExt = Buffer.from([
+            0xCA, 0x34, // extension id
+            0x00, 0x07, // extension length
+            0x00, 0x05, 0x04, 0x81, 0xFD, 0x59, 0x01
+        ]);
+        const hello = Buffer.concat([
+            Buffer.from([0x03, 0x03]), // version
+            Buffer.alloc(32), // random
+            Buffer.from([0x00]), // session id
+            Buffer.from([0x00, 0x02, 0x13, 0x01]), // cipher suites
+            Buffer.from([0x01, 0x00]), // compression methods
+            Buffer.from([0x00, trustAnchorsExt.byteLength]),
+            trustAnchorsExt
+        ]);
+        const handshake = Buffer.concat([
+            Buffer.from([0x01, 0x00, 0x00, hello.byteLength]),
+            hello
+        ]);
+        const record = Buffer.concat([
+            Buffer.from([0x16, 0x03, 0x01, 0x00, handshake.byteLength]),
+            handshake
+        ]);
+
+        const clientHello = await readTlsClientHello(Readable.from(record, { objectMode: false }));
+
+        const expectedIds = [Buffer.from([0x81, 0xFD, 0x59, 0x01])];
+        expect(getExtensionData(clientHello, 'trust_anchors')).to.deep.equal({
+            trustAnchors: expectedIds
+        });
+        expect(getExtensionData(clientHello, 0xCA34)?.trustAnchors).to.deep.equal(expectedIds);
+        expect(EXTENSIONS[0xCA34]).to.equal('trust_anchors');
     });
 });
 

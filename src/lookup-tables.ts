@@ -460,6 +460,7 @@ const _extensions = {
     65281: 'renegotiation_info',
     // Non-IANA but widely deployed
     17513: 'application_settings',
+    51764: 'trust_anchors', // Pre-standard codepoint used by BoringSSL & Chrome
 } as const satisfies Record<number, string>;
 
 export const EXTENSIONS: LookupTable<typeof _extensions> = _extensions as LookupTable<typeof _extensions>;

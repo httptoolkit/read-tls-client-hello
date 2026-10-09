@@ -209,6 +209,25 @@ export function parseEncryptedClientHelloExtension(data: Buffer) {
     return { type, kdfId, aeadId, configId, encLength, payloadLength };
 }
 
+// Each ID is the DER contents of a relative OID under 1.3.6.1.4.1, see
+// https://datatracker.ietf.org/doc/draft-ietf-tls-trust-anchor-ids/
+export function parseTrustAnchorsExtension(data: Buffer) {
+    const listLength = data.readUInt16BE(0);
+    if (listLength !== data.byteLength - 2) return null;
+
+    const trustAnchors: Buffer[] = [];
+    let offset = 2;
+    while (offset < data.byteLength) {
+        const idLength = data[offset];
+        offset += 1;
+        if (idLength === 0 || offset + idLength > data.byteLength) return null;
+
+        trustAnchors.push(data.subarray(offset, offset + idLength));
+        offset += idLength;
+    }
+    return { trustAnchors };
+}
+
 export function parseApplicationSettingsExtension(data: Buffer) {
     // Same format as ALPN
     return parseAlpnExtension(data);
@@ -247,6 +266,7 @@ export const extensionParsers = {
     0x0032: parseSignatureAlgorithmsCertExtension,
     0x0033: parseKeyShareExtension,
     0x4469: parseApplicationSettingsExtension,  // ALPS
+    0xCA34: parseTrustAnchorsExtension,
     0xFE0D: parseEncryptedClientHelloExtension, // ECH
     0xFF01: parseRenegotiationInfoExtension,
 } as const satisfies Record<number, (data: Buffer) => Record<string, unknown> | null>;
