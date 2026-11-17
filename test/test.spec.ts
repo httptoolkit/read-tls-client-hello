@@ -4,7 +4,7 @@ import * as net from 'net';
 import * as tls from 'tls';
 import * as http from 'http';
 import * as https from 'https';
-import { Readable } from 'stream';
+import { Readable, PassThrough } from 'stream';
 import { makeDestroyable, DestroyableServer } from 'destroyable-server';
 
 import { expect } from 'chai';
@@ -662,6 +662,153 @@ describe("ClientHello parsing", () => {
         expect(ch.extensions.length).to.be.greaterThan(0);
         expect(ch.ja3).to.be.a('string');
         expect(ch.ja4).to.be.a('string');
+    });
+
+    it("parses a client hello fragmented across multiple TLS records", async () => {
+        const fixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'chrome-tls-connect.bin'));
+        const recordLength = fixture.readUInt16BE(3);
+        const helloData = fixture.subarray(5, 5 + recordLength);
+
+        const record = (data: Buffer) => Buffer.concat([
+            Buffer.from([0x16, 0x03, 0x01, data.byteLength >> 8, data.byteLength & 0xff]),
+            data
+        ]);
+
+        // Split the handshake message across 3 records, with the first split inside the
+        // handshake header itself:
+        const splitHello = Buffer.concat([
+            record(helloData.subarray(0, 2)),
+            record(helloData.subarray(2, 100)),
+            record(helloData.subarray(100))
+        ]);
+        const trailingData = fixture.subarray(5 + recordLength);
+
+        const expectedHello = await readTlsClientHello(new PassThrough().end(fixture));
+
+        const incomingData = new PassThrough().end(Buffer.concat([splitHello, trailingData]));
+        const clientHello = await readTlsClientHello(incomingData);
+
+        expect(clientHello).to.deep.equal(expectedHello);
+        expect(calculateJa3(clientHello)).to.equal(calculateJa3(expectedHello));
+        expect(calculateJa4(clientHello)).to.equal(calculateJa4(expectedHello));
+
+        // All consumed data should be returned to the stream, unmodified:
+        const remainingData = await streamToBuffer(incomingData);
+        expect(remainingData.equals(Buffer.concat([splitHello, trailingData]))).to.equal(true);
+    });
+
+    it("completes a TLS handshake when the client hello is fragmented across records", async () => {
+        // Capture a real client hello from Node, and then send it to a tracked TLS server split
+        // across multiple records, which real TLS servers accept as a valid handshake.
+        const captureServer = makeDestroyable(new net.Server());
+        captureServer.listen();
+        await new Promise((resolve) => captureServer.on('listening', resolve));
+
+        const helloRecordPromise = getDeferred<Buffer>();
+        const captureSocketPromise = getDeferred<net.Socket>();
+        captureServer.on('connection', (socket) => {
+            captureSocketPromise.resolve(socket);
+            let data = Buffer.from([]);
+            socket.on('data', (d: Buffer) => {
+                data = Buffer.concat([data, d]);
+                if (data.byteLength >= 5 && data.byteLength >= 5 + data.readUInt16BE(3)) {
+                    helloRecordPromise.resolve(data);
+                }
+            });
+        });
+
+        const tlsServer = makeDestroyable(
+            trackClientHellos(tls.createServer({ key: testKey, cert: testCert }))
+        );
+        server = tlsServer;
+        tlsServer.listen();
+        await new Promise((resolve) => tlsServer.on('listening', resolve));
+
+        try {
+            const clientSocket = tls.connect({
+                host: 'localhost',
+                servername: 'localhost',
+                ca: [testCert],
+                port: (captureServer.address() as net.AddressInfo).port
+            });
+            clientSocket.on('error', () => {});
+
+            const helloRecord = await helloRecordPromise;
+            const captureSocket = await captureSocketPromise;
+            const recordLength = helloRecord.readUInt16BE(3);
+            const helloData = helloRecord.subarray(5, 5 + recordLength);
+
+            const record = (data: Buffer) => Buffer.concat([
+                helloRecord.subarray(0, 3), // Same record type & version
+                Buffer.from([data.byteLength >> 8, data.byteLength & 0xff]),
+                data
+            ]);
+
+            const secureConnectionPromise = new Promise<tls.TLSSocket>((resolve) =>
+                tlsServer.on('secureConnection', resolve)
+            );
+
+            // Proxy the client to the real TLS server, splitting the initial hello:
+            const upstream = net.connect({
+                host: 'localhost',
+                port: (tlsServer.address() as net.AddressInfo).port
+            });
+            await new Promise((resolve) => upstream.on('connect', resolve));
+            upstream.write(Buffer.concat([
+                record(helloData.subarray(0, 100)),
+                record(helloData.subarray(100)),
+                helloRecord.subarray(5 + recordLength)
+            ]));
+            captureSocket.removeAllListeners('data');
+            captureSocket.pipe(upstream).pipe(captureSocket);
+
+            const tlsSocket = await secureConnectionPromise;
+            const clientHello = tlsSocket.tlsClientHello!;
+
+            expect(clientHello).to.not.equal(undefined);
+            expect(clientHello.cipherSuites.length).to.be.greaterThan(0);
+            expect(getExtensionData(clientHello, 'server_name')).to.deep.equal({ serverName: 'localhost' });
+
+            clientSocket.destroy();
+        } finally {
+            await captureServer.destroy();
+        }
+    });
+
+    it("rejects a TLS handshake record with length 0", async () => {
+        const zeroLengthRecord = Buffer.from([0x16, 0x03, 0x01, 0x00, 0x00]);
+        try {
+            await readTlsClientHello(new PassThrough().end(zeroLengthRecord));
+            expect.fail("should have rejected a zero-length handshake record");
+        } catch (e: any) {
+            expect(e.message).to.equal("TLS handshake record has length 0");
+        }
+    });
+
+    it("rejects a client hello whose contents exceed OpenSSL's 131396-byte limit", async () => {
+        const record = (data: Buffer) => Buffer.concat([
+            Buffer.from([0x16, 0x03, 0x01, data.byteLength >> 8, data.byteLength & 0xff]),
+            data
+        ]);
+
+        // Handshake header only: type 0x01, 3-byte content length 131397 (0x020145)
+        const tooLargeHeader = Buffer.from([0x01, 0x02, 0x01, 0x45]);
+        try {
+            await readTlsClientHello(new PassThrough().end(record(tooLargeHeader)));
+            expect.fail("should have rejected an oversized client hello");
+        } catch (e: any) {
+            expect(e.message).to.equal("Client hello too large: 131401 bytes");
+        }
+
+        // Content length 131396 (total 131400) should pass the size check, then fail
+        // because the rest of the message is missing:
+        const atLimitHeader = Buffer.from([0x01, 0x02, 0x01, 0x44]);
+        try {
+            await readTlsClientHello(new PassThrough().end(record(atLimitHeader)));
+            expect.fail("should have failed once the remaining hello data was missing");
+        } catch (e: any) {
+            expect(e.message).to.equal("Stream closed before expected data could be read");
+        }
     });
 
     it("handles malformed extension data gracefully", async () => {

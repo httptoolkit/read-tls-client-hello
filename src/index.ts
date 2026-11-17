@@ -108,22 +108,66 @@ export class NonTlsError extends Error {
     }
 }
 
-async function extractTlsHello(inputStream: stream.Readable): Promise<Buffer> {
-    const consumedData = [];
+// OpenSSL rejects ClientHello contents larger than this. The 4-byte handshake header
+// is excluded, so the full handshake message may be up to 131400 bytes:
+const MAX_CLIENT_HELLO_CONTENT_LENGTH = 131396;
+
+// Reads the TLS handshake records containing the client hello. The hello may be fragmented across
+// multiple records (RFC 8446 section 5.1), so this keeps reading handshake records until the full
+// handshake message is available. Returns all the raw consumed bytes (to be put back into the
+// stream later) and the reassembled handshake message data (without the record headers).
+async function extractTlsHello(inputStream: stream.Readable): Promise<{
+    rawData: Buffer,
+    handshakeData: Buffer
+}> {
+    const consumedData: Buffer[] = [];
+    const handshakeData: Buffer[] = [];
+    let handshakeDataLength = 0;
+    let expectedHandshakeLength: number | undefined;
+
     try {
-        consumedData.push(await collectBytes(inputStream, 1));
-        const [recordType] = consumedData[0];
-        if (recordType !== 0x16) throw new Error("Can't calculate TLS fingerprint - not a TLS stream");
+        do {
+            const recordTypeBytes = await collectBytes(inputStream, 1);
+            consumedData.push(recordTypeBytes);
+            const [recordType] = recordTypeBytes;
+            if (recordType !== 0x16) {
+                if (handshakeData.length === 0) {
+                    throw new Error("Can't calculate TLS fingerprint - not a TLS stream");
+                } else {
+                    throw new Error(`Unexpected TLS record type ${recordType} within client hello`);
+                }
+            }
 
-        consumedData.push(await collectBytes(inputStream, 2));
-        const recordLengthBytes = await collectBytes(inputStream, 2);
-        consumedData.push(recordLengthBytes);
-        const recordLength = recordLengthBytes.readUInt16BE(0);
+            consumedData.push(await collectBytes(inputStream, 2));
+            const recordLengthBytes = await collectBytes(inputStream, 2);
+            consumedData.push(recordLengthBytes);
+            const recordLength = recordLengthBytes.readUInt16BE(0);
+            // RFC 9846 section 5.1: MUST NOT send zero-length handshake fragments.
+            // An empty record would otherwise loop forever, accumulating empty buffers.
+            if (recordLength === 0) {
+                throw new Error("TLS handshake record has length 0");
+            }
 
-        consumedData.push(await collectBytes(inputStream, recordLength));
+            const recordData = await collectBytes(inputStream, recordLength);
+            consumedData.push(recordData);
+            handshakeData.push(recordData);
+            handshakeDataLength += recordData.byteLength;
 
-        // Put all the bytes back, so that this stream can still be used to create a real TLS session
-        return Buffer.concat(consumedData);
+            if (expectedHandshakeLength === undefined && handshakeDataLength >= 4) {
+                // Handshake header: 1 byte type, 3 bytes length of the contents
+                const contentLength = Buffer.concat(handshakeData).readUIntBE(1, 3);
+                if (contentLength > MAX_CLIENT_HELLO_CONTENT_LENGTH) {
+                    throw new Error(`Client hello too large: ${4 + contentLength} bytes`);
+                }
+                expectedHandshakeLength = 4 + contentLength;
+            }
+        } while (expectedHandshakeLength === undefined || handshakeDataLength < expectedHandshakeLength);
+
+        return {
+            // Put all the bytes back, so that this stream can still be used to create a real TLS session
+            rawData: Buffer.concat(consumedData),
+            handshakeData: Buffer.concat(handshakeData)
+        };
     } catch (error: any) {
         if (error.consumedData) {
             // This happens if there's an error inside collectBytes with a partial read.
@@ -144,8 +188,12 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
     if (wasFlowing) inputStream.pause(); // Pause other readers, so we have time to precisely get the data we need.
 
     let clientHelloRecordData: Buffer;
+    let clientHello: Buffer;
     try {
-        clientHelloRecordData = await extractTlsHello(inputStream);
+        ({
+            rawData: clientHelloRecordData,
+            handshakeData: clientHello
+        } = await extractTlsHello(inputStream));
     } catch (error: any) {
         if ('consumedData' in error) {
             inputStream.unshift(error.consumedData as Buffer);
@@ -160,7 +208,6 @@ export async function readTlsClientHello(inputStream: stream.Readable): Promise<
 
     // Collect all the hello bytes, and then give us a stream of exactly only those bytes, so we can
     // still process them step by step in order:
-    const clientHello = clientHelloRecordData.slice(5); // Strip TLS record prefix
     const helloDataStream = stream.Readable.from(clientHello, { objectMode: false });
 
     const [helloType] = (await collectBytes(helloDataStream, 1));
