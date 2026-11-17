@@ -775,6 +775,42 @@ describe("ClientHello parsing", () => {
         }
     });
 
+    it("rejects a TLS handshake record with length 0", async () => {
+        const zeroLengthRecord = Buffer.from([0x16, 0x03, 0x01, 0x00, 0x00]);
+        try {
+            await readTlsClientHello(new PassThrough().end(zeroLengthRecord));
+            expect.fail("should have rejected a zero-length handshake record");
+        } catch (e: any) {
+            expect(e.message).to.equal("TLS handshake record has length 0");
+        }
+    });
+
+    it("rejects a client hello whose contents exceed OpenSSL's 131396-byte limit", async () => {
+        const record = (data: Buffer) => Buffer.concat([
+            Buffer.from([0x16, 0x03, 0x01, data.byteLength >> 8, data.byteLength & 0xff]),
+            data
+        ]);
+
+        // Handshake header only: type 0x01, 3-byte content length 131397 (0x020145)
+        const tooLargeHeader = Buffer.from([0x01, 0x02, 0x01, 0x45]);
+        try {
+            await readTlsClientHello(new PassThrough().end(record(tooLargeHeader)));
+            expect.fail("should have rejected an oversized client hello");
+        } catch (e: any) {
+            expect(e.message).to.equal("Client hello too large: 131401 bytes");
+        }
+
+        // Content length 131396 (total 131400) should pass the size check, then fail
+        // because the rest of the message is missing:
+        const atLimitHeader = Buffer.from([0x01, 0x02, 0x01, 0x44]);
+        try {
+            await readTlsClientHello(new PassThrough().end(record(atLimitHeader)));
+            expect.fail("should have failed once the remaining hello data was missing");
+        } catch (e: any) {
+            expect(e.message).to.equal("Stream closed before expected data could be read");
+        }
+    });
+
     it("handles malformed extension data gracefully", async () => {
         // A truncated buffer that will cause most parsers to throw
         const truncated = Buffer.from([0x00]);

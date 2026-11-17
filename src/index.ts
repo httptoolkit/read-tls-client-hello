@@ -108,8 +108,9 @@ export class NonTlsError extends Error {
     }
 }
 
-// OpenSSL rejects client hello messages larger than this, so there's no point buffering more:
-const MAX_CLIENT_HELLO_LENGTH = 131396;
+// OpenSSL rejects ClientHello contents larger than this. The 4-byte handshake header
+// is excluded, so the full handshake message may be up to 131400 bytes:
+const MAX_CLIENT_HELLO_CONTENT_LENGTH = 131396;
 
 // Reads the TLS handshake records containing the client hello. The hello may be fragmented across
 // multiple records (RFC 8446 section 5.1), so this keeps reading handshake records until the full
@@ -141,6 +142,11 @@ async function extractTlsHello(inputStream: stream.Readable): Promise<{
             const recordLengthBytes = await collectBytes(inputStream, 2);
             consumedData.push(recordLengthBytes);
             const recordLength = recordLengthBytes.readUInt16BE(0);
+            // RFC 9846 section 5.1: MUST NOT send zero-length handshake fragments.
+            // An empty record would otherwise loop forever, accumulating empty buffers.
+            if (recordLength === 0) {
+                throw new Error("TLS handshake record has length 0");
+            }
 
             const recordData = await collectBytes(inputStream, recordLength);
             consumedData.push(recordData);
@@ -148,11 +154,12 @@ async function extractTlsHello(inputStream: stream.Readable): Promise<{
             handshakeDataLength += recordData.byteLength;
 
             if (expectedHandshakeLength === undefined && handshakeDataLength >= 4) {
-                // Handshake header: 1 byte type, 3 bytes length
-                expectedHandshakeLength = 4 + Buffer.concat(handshakeData).readUIntBE(1, 3);
-                if (expectedHandshakeLength > MAX_CLIENT_HELLO_LENGTH) {
-                    throw new Error(`Client hello too large: ${expectedHandshakeLength} bytes`);
+                // Handshake header: 1 byte type, 3 bytes length of the contents
+                const contentLength = Buffer.concat(handshakeData).readUIntBE(1, 3);
+                if (contentLength > MAX_CLIENT_HELLO_CONTENT_LENGTH) {
+                    throw new Error(`Client hello too large: ${4 + contentLength} bytes`);
                 }
+                expectedHandshakeLength = 4 + contentLength;
             }
         } while (expectedHandshakeLength === undefined || handshakeDataLength < expectedHandshakeLength);
 
